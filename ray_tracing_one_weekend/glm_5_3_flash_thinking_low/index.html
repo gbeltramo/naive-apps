@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ray Tracing in One Weekend — JS port</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    font-family: system-ui, sans-serif;
+    background: #17181c;
+    color: #ddd;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+  }
+  h1 { font-size: 1.1rem; font-weight: 600; margin: 14px 0 4px; }
+  #controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    justify-content: center;
+    background: #22242a;
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin: 8px 12px;
+    max-width: 960px;
+  }
+  #controls label { font-size: 0.8rem; display: flex; flex-direction: column; gap: 3px; }
+  #controls select, #controls button {
+    background: #2c2f36; color: #ddd; border: 1px solid #444;
+    border-radius: 5px; padding: 4px 8px; font-size: 0.85rem;
+  }
+  #controls button { cursor: pointer; }
+  #controls button:disabled { opacity: 0.4; cursor: default; }
+  #renderBtn { background: #2f6f4f; border-color: #3c8a63; }
+  #stopBtn  { background: #7a3030; border-color: #9a4040; }
+  #status {
+    font-size: 0.85rem; margin: 4px 0; color: #aaa;
+    display: flex; gap: 18px; flex-wrap: wrap; justify-content: center;
+  }
+  #progressWrap {
+    width: min(920px, 92vw); height: 8px; background: #2a2c31;
+    border-radius: 4px; overflow: hidden; margin-bottom: 8px;
+  }
+  #progressBar { width: 0%; height: 100%; background: #4a9; transition: width 0.15s; }
+  canvas {
+    background: #000;
+    image-rendering: auto;
+    border: 1px solid #333;
+    border-radius: 4px;
+    margin-bottom: 24px;
+    max-width: 94vw;
+    height: auto;
+  }
+</style>
+</head>
+<body>
+<h1>Ray Tracing in One Weekend — pure</h1> JS</h1>
+
+<div id="controls">
+  <label>Preset
+    <select id="preset">
+      <option value="quick">Quick preview (200px, 10 spp)</option>
+      <option value="balanced" selected>Balanced (400px, 50 spp)</option>
+      <option value="final">Final quality (800px, 200 spp)</option>
+      <option value="custom">Custom</option>
+    </select>
+  </label>
+  <label>Scene
+    <select id="scene">
+      <option value="norm</label>als">Ch.6 normals sphere</option>
+      <option value="diffuse">Ch.9 diffuse</option>
+      <option value="trio">Ch.11 metal/glass trio</option>
+      <option value="final" selected>Final scene</option</option>>
+    </select>
+  </label>
+  <label>Image width
+    </label><select id="width">
+      <option>200</option></option><option selected>400</option><option</option>>600</option><option>800</option><option</option>>1200</option>
+    </select>
+  </label>
+  <label>Samples / pixel
+    <select id="spp">
+      <option>10</option></option><option selected>50</option></option><option>100</option</option>><option>500</option></option>
+    </select>
+  </label>
+  <label>Max depth
+    <select id</label>="depth">
+      <option>10</option><option</option> selected>50</option><option></option>100</option>
+    </select>
+  </label>
+  <button id="renderBtn">Render</button>
+  <button id="stopBtn" disabled>Stop</button>
+</button>  <button id="downloadBtn">Download PNG</button>
+</div>
+
+<div id="status">
+  <span id="progressText">0%</span>
+  <span id="timeText">0.0 s</span>
+  <span id="raysText">— rays/s</span>
+</div>
+<div id="progressWrap"><div id="progressBar"></div></div>
+
+<canvas id="canvas"></canvas>
+
+<!-- ============================================================
+     WORKER SOURCE — the entire ray tracer lives here so the
+     worker is fully self-contained (workers can't touch
+     main-thread classes). Read via textContent -> Blob URL.
+     ============================================================ -->
+<script id="workerSrc" type="text/worker-src-no-run">
+'use strict';
+
+/* =========================================================
+   Ch.2 — Vec3 math (Point3 and Color are aliases)
+   ========================================================= */
+class Vec3 {
+  constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z; }
+  // returns a NEW vector (clarity over allocation micro-optimisation)
+  add(v)  { return new Vec3(this.x + v.x, this.y + v.y, this.z + v.z); }
+  sub(v)  { return new Vec3(this.x - v.x, this.y - v.y, this.z - v.z); }
+  mul(v)  { return new Vec3(this.x * v.x, this.y * v.y, this.z * v.z); } // componentwise
+  scale(s){ return new Vec3(this.x * s, this.y * s, this.z * s); }
+  div(s)  { return this.scale(1 / s); }
+  neg()   { return new Vec3(-this.x, -this.y, -this.z); }
+  dot(v)  { return this.x * v.x + this.y * v.y + this.z * v.z; }
+  cross(v){ return new Vec3(this.y * v.z - this.z * v.y,
+                            this.z * v.x - this.x * v.z,
+                            this.x * v.y - this.y * v.x); }
+  lengthSquared() { return this.x * this.x + this.y * this.y + this.z * this.z; }
+  length() { return Math.sqrt(this.lengthSquared()); }
+  unit()   { return this.div(this.length()); }
+  nearZero() {
+    const e = 1e-8;
+    return Math.abs(this.x) < e && Math.abs(this.y) < e && Math.abs(this.z) < e;
+  }
+  // Ch.7 — reflection: v in, n unit normal
+  reflect(n) { return this.sub(n.scale(2 * this.dot(n))); }
+  // Ch.11 — Snell's law refraction; returns null-vector on total internal reflection
+  refract(n, etaRatio) {
+    const cosTheta = Math.min(this.dot(n), 1.0);
+    const rOutPerp = this.add(n.scale(-cosTheta)).scale(etaRatio);
+    const rOutParallel = n.scale(-Math.sqrt(Math.max(0, 1 - rOutPerp.lengthSquared())));
+    return rOutPerp.add(rOutParallel);
+  }
+  static random(rng, min, max) {
+    return new Vec3(min + (max - min) * rng(), min + (max - min) * rng(), min + (max - min) * rng());
+  }
+  static randomInUnitDisk(rng) { // Ch.12 defocus blur
+    while (true) {
+      const p = new Vec3(rng() * 2 - 1, rng() * 2 - 1, 0);
+      if (p.lengthSquared() < 1) return p;
+    }
+  }
+  static randomUnitVector(rng) {
+    while (true) {
+      const p = Vec3.random(rng, -1, 1);
+      const len2 = p.lengthSquared();
+      if (len2 > 1e-160 && len2 <= 1) return p.div(Math.sqrt(len2));
+    }
+  }
+  static randomInUnitSphere(rng) {
+    while (true) {
+      const p = Vec3.random(rng, -1, 1);
+      if (p.lengthSquared() < 1) return p;
+    }
+  }
+  static randomInHemisphere(rng, normal) {
+    const inUnit = Vec3.randomInUnitSphere(rng);
+    return inUnit.dot(normal) > 0 ? inUnit : inUnit.neg();
+  }
+}
+const Point3 = Vec3;
+const Color = Vec3;
+
+/* Ch.3 — Ray */
+class Ray {
+  constructor(origin, direction) { this.origin = origin; this.direction = direction; }
+  at(t) { return this.origin.add(this.direction.scale(t)); }
+}
+
+/* Ch.5 — Interval for the hit range */
+class Interval {
+  constructor(min, max) { this.min = min; this.max = max; }
+  contains(x) { return this.min <= x && x <= this.max; }
+  surrounds(x) { return this.min < x && x < this.max; }
+}
+const EMPTY = new Interval(Infinity, -Infinity);
+const UNIVERSE = new Interval(-Infinity, Infinity);
+
+/* Ch.5 — HitRecord */
+class HitRecord {
+  constructor() {
+    this.point = null; this.normal = null; this.t = 0;
+    this.frontFace = false; this.material = null;
+  }
+  setFaceNormal(ray, outwardNormal) {
+    this.frontFace = ray.direction.dot(outwardNormal) < 0;
+    this.normal = this.frontFace ? outwardNormal : outwardNormal.neg();
+  }
+}
+
+/* Ch.5 — Sphere (half-b quadratic optimisation) */
+class Sphere {
+  constructor(center, radius, material) {
+    this.center = center; this.radius = radius; this.material = material;
+  }
+  hit(ray, rayT, rec) {
+    const oc = ray.origin.sub(this.center);
+    const a = ray.direction.lengthSquared();
+    const halfB = oc.dot(ray.direction);
+    const c = oc.lengthSquared() - this.radius * this.radius;
+    const discriminant = halfB * halfB - a * c;
+    if (discriminant < 0) return false;
+    const sqrtd = Math.sqrt(discriminant);
+    // nearest root in [tmin, tmax]
+    let root = (-halfB - sqrtd) / a;
+    if (!rayT.surrounds(root)) {
+      root = (-halfB + sqrtd) / a;
+      if (!rayT.surrounds(root)) return false;
+    }
+    rec.t = root;
+    rec.point = ray.at(root);
+    const outwardNormal = rec.point.sub(this.center).div(this.radius);
+    rec.setFaceNormal(ray, outwardNormal);
+    rec.material = this.material;
+    return true;
+  }
+}
+
+/* Ch.5 — HittableList */
+class HittableList {
+  constructor() { this.objects = []; }
+  add(obj) { this.objects.push(obj); return this; }
+  hit(ray, rayT, rec) {
+    let hitAnything = false;
+    let closestSoFar = rayT.max;
+    for (const obj of this.objects) {
+      const tempT = new Interval(rayT.min, closestSoFar);
+      if (obj.hit(ray, tempT, rec)) {
+        hitAnything = true;
+        closestSoFar = rec.t;
+      }
+    }
+    return hitAnything;
+  }
+}
+
+/* =========================================================
+   Ch.8 — Materials
+   ========================================================= */
+class Lambertian {
+  constructor(albedo) { this.albedo = albedo; }
+  scatter(rayIn, rec, rng) {
+    // Ch.9: true Lambertian distribution
+    let scatterDirection = rec.normal.add(Vec3.randomUnitVector(rng));
+    if (scatterDirection.nearZero()) scatterDirection = rec.normal; // degenerate case
+    const scattered = new Ray(rec.point, scatterDirection);
+    return { scattered, attenuation: this.albedo };
+  }
+}
+class Metal {
+  constructor(albedo, fuzz) {
+    this.albedo = albedo;
+    this.fuzz = Math.min(fuzz, 1);
+  }
+  scatter(rayIn, rec, rng) {
+    const reflected = rayIn.direction.unit().reflect(rec.normal);
+    const scattered = new Ray(rec.point, reflected.add(Vec3.randomInUnitSphere(rng).scale(this.fuzz)));
+    if (scattered.direction.dot(rec.normal) <= 0) return null; // absorbed
+    return { scattered, attenuation: this.albedo };
+  }
+}
+class Dielectric {
+  constructor(indexOfRefraction) { this.ir = indexOfRefraction; }
+  // Ch.11 — Schlick approximation for reflectance
+  static reflectance(cosine, refRatio) {
+    let r0 = (1 - refRatio) / (1 + refRatio);
+    r0 = r0 * r0;
+    return r0 + (1 - r0) * Math.pow(1 - cosine, 5);
+  }
+  scatter(rayIn, rec, rng) {
+    const attenuation = new Color(1, 1, 1);
+    const refractionRatio = rec.frontFace ? 1 / this.ir : this.ir;
+    const unitDir = rayIn.direction.unit();
+    const cosTheta = Math.min(unitDir.dot(rec.normal), 1.0);
+    const sinTheta = Math.sqrt(1 - cosTheta * cosTheta);
+    const cannotRefract = refractionRatio * sinTheta > 1.0;
+    let direction;
+    if (cannotRefract || Dielectric.reflectance(cosTheta, refractionRatio) > rng()) {
+      direction = unitDir.reflect(rec.normal); // total internal reflection (or Schlick says reflect)
+    } else {
+      direction = unitDir.refract(rec.normal, refractionRatio);
+    }
+    return { scattered: new Ray(rec.point, direction), attenuation };
+  }
+}
+
+/* =========================================================
+   Ch.10/12 — Camera (positionable, defocus blur)
+   ========================================================= */
+class Camera {
+  constructor(opts) {
+    const {
+      aspectRatio = 1, imageWidth = 400, samplesPerPixel = 50, maxDepth = 50,
+      vfov = 90, lookFrom = new Point3(0, 0, -1), lookAt = new Point3(0, 0, 0),
+      vup = new Vec3(0, 1, 0), defocusAngle = 0, focusDist = 10,
+      background = null,
+    } = opts;
+    this.samplesPerPixel = samplesPerPixel;
+    this.maxDepth = maxDepth;
+    this.background = background;
+    const imageHeight = Math.max(1, Math.floor(imageWidth / aspectRatio));
+
+    const theta = vfov * Math.PI / 180;
+    const h = Math.tan(theta / 2);
+    const viewportHeight = 2 * h * focusDist;
+    const viewportWidth = viewportHeight * (imageWidth / imageHeight);
+
+    const w = lookFrom.sub(lookAt).unit();
+    const u = vup.cross(w).unit();
+    const v = w.cross(u);
+
+    this.center = lookFrom;
+    this.pixelDeltaU = u.scale(viewportWidth / imageWidth);
+    this.pixelDeltaV = v.scale(viewportHeight / imageHeight);
+    this.viewportUpperLeft = lookFrom.sub(w.scale(focusDist))
+      .sub(u.scale(viewportWidth / 2)).sub(v.scale(viewportHeight / 2));
+    this.pixel00Loc = this.viewportUpperLeft
+      .add(this.pixelDeltaU.scale(0.5)).add(this.pixelDeltaV.scale(0.5));
+
+    // Ch.12 — defocus blur disk (book: radius = focusDist * tan(defocus_angle/2))
+    this.defocusRadius = defocusAngle <= 0 ? 0 : focusDist * Math.tan((defocusAngle / 2) * Math.PI / 180);
+    this.defocusDiskU = u.scale(this.defocusRadius);
+    this.defocusDiskV = v.scale(this.defocusRadius);
+    this.imageWidth = imageWidth;
+    this.imageHeight = imageHeight;
+  }
+  defocusDiskSample(rng) {
+    const p = Vec3.randomInUnitDisk(rng);
+    // only x,y of the disk sample map onto the lens plane basis vectors
+    return this.defocusDiskU.scale(p.x).add(this.defocusDiskV.scale(p.y));
+  }
+  getRay(rng, i, j) {
+    const offset = Vec3.randomInUnitDisk(rng); // antialiasing sample in pixel (Ch.7)
+    const pixelSample = this.pixel00Loc
+      .add(this.pixelDeltaU.scale(i + offset.x))
+      .add(this.pixelDeltaV.scale(j + offset.y));
+    const rayOrigin = this.defocusRadius > 0
+      ? this.center.add(this.defocusDiskSample(rng))
+      : this.center;
+    return new Ray(rayOrigin, pixelSample.sub(rayOrigin));
+  }
+}
+
+/* =========================================================
+   Ch.6/7 — Ray color (iterative, max depth, sky gradient)
+   ========================================================= */
+function rayColor(ray, world, maxDepth, background) {
+  let attenuation = new Color(1, 1, 1); // accumulated throughput
+  let currentRay = ray;
+  for (let depth = 0; depth < maxDepth; depth++) {
+    const rec = new HitRecord();
+    if (!world.hit(currentRay, new Interval(0.001, Infinity), rec)) {
+      // Ch.6 — background sky gradient
+      const unitDir = currentRay.direction.unit();
+      const a = 0.5 * (unitDir.y + 1.0);
+      const sky = new Color(1, 1, 1).scale(1 - a).add(new Color(0.5, 0.7, 1.0).scale(a));
+      return attenuation.mul(background !== null ? background : sky);
+    }
+    const result = rec.material.scatter(currentRay, rec, rngGlobal);
+    if (!result) return new Color(0, 0, 0); // absorbed
+    attenuation = attenuation.mul(result.attenuation);
+    currentRay = result.scattered;
+  }
+  return new Color(0, 0, 0); // exceeded bounce limit
+}
+
+/* =========================================================
+   Ch.5/9/11/13 — Scenes
+   ========================================================= */
+function defaultScene() { // Ch.9 two-sphere diffuse check
+  const world = new HittableList();
+  world.add(new Sphere(new Point3(0, -1000, 0), 1000, new Lambertian(new Color(0.5, 0.5, 0.5))));
+  world.add(new Sphere(new Point3(0, 0, 0), 0.5, new Lambertian(new Color(0.1, 0.2, 0.5))));
+  return { world, lookFrom: new Point3(0, 0, -1), lookAt: new Point3(0, 0, 0), vfov: 90 };
+}
+
+function normalsScene() { // Ch.6 — one sphere, normals as color
+  const world = new HittableList();
+  world.add(new Sphere(new Point3(0, 0, -1), 0.5, new Lambertian(new Color(1, 1, 1))));
+  return { world, lookFrom: new Point3(0, 0, -1), lookAt: new Point3(0, 0, 0), vfov: 90 };
+}
+
+function diffuseScene() { // Ch.9 — diffuse sphere on ground
+  const world = new HittableList();
+  world.add(new Sphere(new Point3(0, -100.5, -1), 100, new Lambertian(new Color(0.8, 0.8, 0))));
+  world.add(new Sphere(new Point3(0, 0, -1.2), 0.5, new Lambertian(new Color(0.1, 0.2, 0.5))));
+  return { world, lookFrom: new Point3(0, 0, -1), lookAt: new Point3(0, 0, 0), vfov: 90 };
+}
+
+function trioScene() { // Ch.11 — lambert / metal / glass trio
+  const world = new HittableList();
+  const R = Math.cos(Math.PI / 4);
+  world.add(new Sphere(new Point3(0, -100.5, -1), 100, new Lambertian(new Color(0.8, 0.8, 0))));
+  world.add(new Sphere(new Point3(-R, 0, -1), R, new Lambertian(new Color(0.8, 0.8, 0))));
+  world.add(new Sphere(new Point3(R, 0, -1), R, new Metal(new Color(0.8, 0.8, 0.8), 0.0)));
+  world.add(new Sphere(new Point3(0, 1, -1), 0.5, new Dielectric(1.5)));
+  return { world, lookFrom: new Point3(0, 0, -1), lookAt: new Point3(0, 0, 0), vfov: 90 };
+}
+
+function finalScene(rng) { // Ch.13 — the book cover scene
+  const world = new HittableList();
+  const ground = new Lambertian(new Color(0.5, 0.5, 0.5));
+  world.add(new Sphere(new Point3(0, -1000, 0), 1000, ground));
+
+  for (let a = -11; a < 11; a++) {
+    for (let b = -11; b < 11; b++) {
+      const chooseMat = rng();
+      const center = new Point3(a + 0.9 * rng(), 0.2, b + 0.9 * rng());
+      if (center.sub(new Point3(4, 0.2, 0)).length() > 0.9) {
+        if (chooseMat < 0.8) { // diffuse
+          const albedo = Vec3.random(rng, 0, 1).mul(Vec3.random(rng, 0, 1));
+          world.add(new Sphere(center, 0.2, new Lambertian(albedo)));
+        } else if (chooseMat < 0.95) { // metal
+          const albedo = Vec3.random(rng, 0.5, 1);
+          const fuzz = rng() * 0.5;
+          world.add(new Sphere(center, 0.2, new Metal(albedo, fuzz)));
+        } else { // glass
+          world.add(new Sphere(center, 0.2, new Dielectric(1.5)));
+        }
+      }
+    }
+  }
+  world.add(new Sphere(new Point3(0, 1, 0), 1.0, new Dielectric(1.5)));
+  world.add(new Sphere(new Point3(-4, 1, 0), 1.0, new Lambertian(new Color(0.4, 0.2, 0.1))));
+  world.add(new Sphere(new Point3(4, 1, 0), 1.0, new Metal(new Color(0.7, 0.6, 0.5), 0.0)));
+  return world;
+}
+
+/* =========================================================
+   Seeded PRNG — mulberry32 (deterministic renders)
+   ========================================================= */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* =========================================================
+   Worker message loop — interleaved scanlines across workers
+   ========================================================= */
+let rngGlobal = Math.random; // set per-row below (used by material scatter)
+
+self.onmessage = function (e) {
+  const msg = e.data;
+  if (msg.type !== 'render') return;
+  const { width, height, spp, maxDepth, sceneName, seed, workerIndex, workerCount } = msg;
+
+  const aspect = width / height;
+  const sceneRng = mulberry32(seed + 12345); // deterministic scene layout
+
+  let sceneDef;
+  if (sceneName === 'normals') sceneDef = normalsScene();
+  else if (sceneName === 'diffuse') sceneDef = diffuseScene();
+  else if (sceneName === 'trio') sceneDef = trioScene();
+  else sceneDef = { world: finalScene(sceneRng), lookFrom: new Point3(13, 2, 3), lookAt: new Point3(0, 0, 0), vfov: 20 };
+
+  const cam = new Camera({
+    aspectRatio: aspect,
+    imageWidth: width,
+    samplesPerPixel: spp,
+    maxDepth: maxDepth,
+    vfov: sceneDef.vfov,
+    lookFrom: sceneDef.lookFrom,
+    lookAt: sceneDef.lookAt,
+    vup: new Vec3(0, 1, 0),
+    defocusAngle: sceneName === 'final' ? 0.6 : 0,
+    focusDist: 10,
+    background: sceneName === 'normals' ? new Color(0.5, 0.7, 1.0) : null,
+  });
+
+  const pixelsPerRow = width;
+  let rowsDone = 0;
+  const totalRows = height;
+
+  // Each worker renders interleaved scanlines: workerIndex, workerIndex+count, ...
+  for (let j = workerIndex; j < height; j += workerCount) {
+    rngGlobal = mulberry32(seed * 2654435761 + j * 40503 + workerIndex); // per-row deterministic rng for scatter
+    const rowBuf = new Uint8ClampedArray(pixelsPerRow * 4);
+    for (let i = 0; i < width; i++) {
+      let r = 0, g = 0, b = 0;
+      for (let s = 0; s < spp; s++) {
+        const ray = cam.getRay(rngGlobal, i, j);
+        const c = rayColor(ray, sceneDef.world, maxDepth, cam.background);
+        // Ch.7 — accumulate raw (linear) color; gamma applied at the end
+        r += c.x; g += c.y; b += c.z;
+      }
+      const scale = 1.0 / spp;
+      // Ch.4/7 — gamma 2 correction: linear -> gamma = sqrt(linear)
+      rowBuf[i * 4 + 0] = Math.sqrt(Math.min(Math.max(r * scale, 0), 1)) * 255;
+      rowBuf[i * 4 + 1] = Math.sqrt(Math.min(Math.max(g * scale, 0), 1)) * 255;
+      rowBuf[i * 4 + 2] = Math.sqrt(Math.min(Math.max(b * scale, 0), 1)) * 255;
+      rowBuf[i * 4 + 3] = 255;
+    }
+    rowsDone++;
+    self.postMessage({
+      type: 'row',
+      j: j,
+      data: rowBuf.buffer,
+      rowsDone: rowsDone,
+      rays: pixelsPerRow * spp,
+    }, [rowBuf.buffer]); // transfer, no copy
+  }
+  self.postMessage({ type: 'done', workerIndex });
+};
+</script>
+
+<!-- ============================================================
+     MAIN THREAD — UI, worker pool, canvas compositing
+     ============================================================ -->
+<script>
+'use strict';
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const $ = (id) => document.getElementById(id);
+
+let workers = [];
+let rendering = false;
+let startTime = 0;
+let totalRays = 0;
+let rowsCompleted = 0;
+let totalRows = 0;
+let renderId = 0; // token to ignore stale worker messages
+
+/* Build the worker from the inline script tag (self-contained source). */
+function createWorker() {
+  const src = document.getElementById('workerSrc').textContent;
+  const blob = new Blob([src], { type: 'application/javascript' });
+  return new Worker(URL.createObjectURL(blob));
+}
+
+function setProgress(frac) {
+  $('progressBar').style.width = (frac * 100).toFixed(1) + '%';
+  $('progressText').textContent = (frac * 100).toFixed(1) + '%';
+}
+
+function startRender() {
+  if (rendering) stopRender();
+
+  const width = parseInt($('width').value, 10);
+  const spp = parseInt($('spp').value, 10);
+  const maxDepth = parseInt($('depth').value, 10);
+  const sceneName = $('scene').value;
+  const seed = 1337; // deterministic
+
+  const height = Math.max(1, Math.floor(width / (16 / 9)));
+  canvas.width = width;
+  canvas.height = height;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, width, height);
+
+  const numWorkers = Math.min(8, navigator.hardwareConcurrency || 4);
+  workers = [];
+  rowsCompleted = 0;
+  totalRows = height;
+  totalRays = 0;
+  startTime = performance.now();
+  rendering = true;
+  const myId = ++renderId;
+
+  $('renderBtn').disabled = true;
+  $('stopBtn').disabled = false;
+  setProgress(0);
+  $('timeText').textContent = '0.0 s';
+  $('raysText').textContent = '— rays/s';
+
+  const workerSrc = document.getElementById('workerSrc').textContent;
+  const blobURL = URL.createObjectURL(new Blob([workerSrc], { type: 'application/javascript' }));
+
+  for (let k = 0; k < numWorkers; k++) {
+    const w = new Worker(blobURL);
+    w.onmessage = (e) => {
+      if (renderId !== myId) return; // stale message after stop/restart
+      const m = e.data;
+      if (m.type === 'row') {
+        const imgData = new ImageData(new Uint8ClampedArray(m.data), width, 1);
+        ctx.putImageData(imgData, 0, m.j);
+        rowsCompleted++;
+        totalRays += m.rays;
+        const frac = rowsCompleted / totalRows;
+        setProgress(frac);
+        const elapsed = (performance.now() - startTime) / 1000;
+        $('timeText').textContent = elapsed.toFixed(1) + ' s';
+        $('raysText').textContent = Math.round(totalRays / elapsed).toLocaleString() + ' rays/s';
+      } else if (m.type === 'done') {
+        w.terminate();
+      }
+    };
+    w.onerror = (err) => console.error('Worker error:', err.message, err);
+    workers.push(w);
+    w.postMessage({
+      type: 'render', width, height, spp, maxDepth, sceneName, seed,
+      workerIndex: k, workerCount: numWorkers,
+    });
+  }
+}
+
+function stopRender() {
+  rendering = false;
+  renderId++;
+  for (const w of workers) { w.terminate(); }
+  workers = [];
+  $('renderBtn').disabled = false;
+  $('stopBtn').disabled = true;
+}
+
+/* Preset dropdown drives width/spp selects. */
+$('preset').addEventListener('change', () => {
+  const v = $('preset').value;
+  if (v === 'quick') { $('width').value = '200'; $('spp').value = '10'; $('depth').value = '10'; }
+  else if (v === 'balanced') { $('width').value = '400'; $('spp').value = '50'; $('depth').value = '50'; }
+  else if (v === 'final') { $('width').value = '800'; $('spp').value = '200'; $('depth').value = '50'; }
+  if (v !== 'custom') startRender();
+});
+
+/* Changing any custom control flips preset to Custom. */
+for (const id of ['width', 'spp', 'depth', 'scene']) {
+  $(id).addEventListener('change', () => { $('preset').value = 'custom'; });
+}
+
+$('renderBtn').addEventListener('click', startRender);
+$('stopBtn').addEventListener('click', stopRender);
+
+$('downloadBtn').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.download = 'raytraced.png';
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+});
+
+/* Auto-render a quick preview of the final scene on load. */
+window.addEventListener('load', () => {
+  $('preset').value = 'quick';
+  $('width').value = '200';
+  $('spp').value = '10';
+  $('depth').value = '10';
+  $('scene').value = 'final';
+  startRender();
+});
+</script>
+</body>
+</html>

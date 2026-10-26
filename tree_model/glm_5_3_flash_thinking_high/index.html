@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Procedural 3D Tree Generator</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0e12;
+    font-family: system-ui, -apple-system, sans-serif; }
+  canvas { display: block; }
+  #panel {
+    position: fixed; top: 12px; left: 12px; width: 272px;
+    max-height: calc(100vh - 24px); overflow-y: auto;
+    background: rgba(15, 22, 28, 0.82); color: #dfe9f0;
+    padding: 12px 14px; border-radius: 10px; font-size: 12px;
+    backdrop-filter: blur(6px); z-index: 10;
+  }
+  #panel h1 { font-size: 14px; margin: 0 0 8px; letter-spacing: 0.4px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .row label { flex: 0 0 104px; color: #a8bccb; }
+  .row input[type="range"] { flex: 1; min-width: 0; accent-color: #6fbf4f; }
+  .row .val { flex: 0 0 46px; text-align: right; color: #8fd07a;
+    font-variant-numeric: tabular-nums; }
+  #seed { width: 72px; background: #0d141a; color: #dfe9f0;
+    border: 1px solid #2c3a45; border-radius: 4px; padding: 2px 4px; }
+  button { background: #2f6d3a; color: #fff; border: 0; border-radius: 4px;
+    padding: 4px 10px; cursor: pointer; }
+  button:hover { background: #3a844a; }
+  .toggles label { flex: none; display: flex; align-items: center; gap: 4px; }
+  #fps {
+    position: fixed; top: 12px; right: 12px; z-index: 10;
+    background: rgba(15, 22, 28, 0.82); color: #8fd07a;
+    padding: 4px 10px; border-radius: 6px; font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="panel">
+  <h1>Procedural Tree</h1>
+  <div class="row">
+    <label for="seed">Seed</label>
+    <input id="seed" type="number" min="0" max="999999" step="1" value="1337">
+    <button id="regen">Regenerate</button>
+  </div>
+  <div id="sliders"></div>
+  <div class="row toggles">
+    <label><input id="shadows" type="checkbox" checked> Shadows</label>
+    <label><input id="autumn" type="checkbox"> Autumn colors</label>
+  </div>
+</div>
+<div id="fps">-- fps</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const DEG2RAD = Math.PI / 180;
+
+/* ============================================================
+   1. SETUP — renderer, scene, camera, lights, sky, ground
+   ============================================================ */
+
+const params = {
+  seed: 1337,
+  depth: 5,          // branching levels (3..7)
+  leafCount: 5000,
+  trunkHeight: 4,
+  trunkRadius: 0.35,
+  branchAngle: 38,   // degrees between parent and child branch
+  lengthDecay: 0.78,
+  radiusDecay: 0.65,
+  droop: 0.18,       // gravity bending factor
+  windStrength: 1.0,
+  windDir: 35,       // degrees
+  gustFreq: 0.6,
+  sunElev: 42,       // degrees
+  sunAzim: 35,       // degrees
+  autumn: false,
+  shadows: true,
+};
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+const maxAniso = renderer.capabilities.getMaxAnisotropy();
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9ec7e8);
+scene.fog = new THREE.Fog(0xc6dff0, 60, 220);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 600);
+camera.position.set(12, 7, 16);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 4.5, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI * 0.495; // keep camera above ground
+controls.minDistance = 2;
+controls.maxDistance = 80;
+controls.update();
+
+// Ambient fill from sky + ground bounce
+const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x5a7a4a, 0.8);
+scene.add(hemi);
+
+// Single shadow-casting sun
+const sun = new THREE.DirectionalLight(0xfff2dd, 3.0);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.03;
+scene.add(sun);
+scene.add(sun.target);
+
+const treeCenter = new THREE.Vector3(0, 4.5, 0);
+const sunDir = new THREE.Vector3(0, 1, 0);
+
+// Gradient sky dome (tone-mapped + output-converted so it matches the scene)
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(280, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+    uniforms: {
+      uZenith:  { value: new THREE.Color(0x3a7bd5) },
+      uHorizon: { value: new THREE.Color(0xcfe4f2) },
+    },
+    vertexShader: `
+      varying vec3 vDir;
+      void main() {
+        vDir = position;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      varying vec3 vDir;
+      uniform vec3 uZenith;
+      uniform vec3 uHorizon;
+      void main() {
+        float h = clamp(normalize(vDir).y, 0.0, 1.0);
+        gl_FragColor = vec4(mix(uHorizon, uZenith, pow(h, 0.55)), 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  })
+);
+scene.add(sky);
+
+const treeGroup = new THREE.Group();
+scene.add(treeGroup);
+
+/* ============================================================
+   2. TEXTURES — all generated with canvas 2D, no image files
+   ============================================================ */
+
+function makeBarkTextures() {
+  const s = 256;
+  // Albedo: brown base with vertical fissures and speckle noise
+  const c = document.createElement('canvas'); c.width = c.height = s;
+  const g = c.getContext('2d');
+  g.fillStyle = '#5d4433';
+  g.fillRect(0, 0, s, s);
+  for (let i = 0; i < 520; i++) {
+    const x = Math.random() * s, y = Math.random() * s;
+    const h = 15 + Math.random() * 90, w = 1 + Math.random() * 2.5;
+    const l = Math.random() < 0.6 ? 25 + Math.random() * 25 : 90 + Math.random() * 50;
+    g.fillStyle = `rgba(${l | 0},${(l * 0.75) | 0},${(l * 0.5) | 0},${0.25 + Math.random() * 0.35})`;
+    g.fillRect(x, y, w, h);
+  }
+  const img = g.getImageData(0, 0, s, s);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * 26;
+    img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
+  }
+  g.putImageData(img, 0, 0);
+  const map = new THREE.CanvasTexture(c);
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.anisotropy = maxAniso;
+
+  // Bump: grayscale vertical ridges (normal-like surface variation)
+  const bc = document.createElement('canvas'); bc.width = bc.height = s;
+  const bg = bc.getContext('2d');
+  bg.fillStyle = '#808080';
+  bg.fillRect(0, 0, s, s);
+  for (let i = 0; i < 380; i++) {
+    const x = Math.random() * s, y = Math.random() * s;
+    const h = 20 + Math.random() * 110, w = 1 + Math.random() * 3;
+    const v = Math.random() < 0.55 ? 40 + Math.random() * 40 : 170 + Math.random() * 60;
+    bg.fillStyle = `rgba(${v | 0},${v | 0},${v | 0},${0.3 + Math.random() * 0.4})`;
+    bg.fillRect(x, y, w, h);
+  }
+  const bump = new THREE.CanvasTexture(bc);
+  bump.wrapS = bump.wrapT = THREE.RepeatWrapping;
+  bump.anisotropy = maxAniso;
+  return { map, bump };
+}
+
+function makeLeafTexture() {
+  // Drawn bright/desaturated so per-instance colors provide the hue
+  const w = 128, h = 256;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, w, h);
+  const grad = g.createLinearGradient(0, 20, 0, 244);
+  grad.addColorStop(0, 'rgb(228,238,205)');
+  grad.addColorStop(1, 'rgb(192,208,168)');
+  g.beginPath();
+  g.moveTo(64, 244);
+  g.bezierCurveTo(14, 205, 10, 90, 64, 20);
+  g.bezierCurveTo(118, 90, 114, 205, 64, 244);
+  g.closePath();
+  g.fillStyle = grad;
+  g.fill();
+  // central vein + side veins
+  g.strokeStyle = 'rgba(118,138,88,0.9)';
+  g.lineWidth = 4;
+  g.beginPath(); g.moveTo(64, 240); g.lineTo(64, 26); g.stroke();
+  g.lineWidth = 2;
+  g.strokeStyle = 'rgba(118,138,88,0.5)';
+  for (let i = 0; i < 7; i++) {
+    const y = 60 + i * 26;
+    g.beginPath(); g.moveTo(64, y + 22); g.lineTo(24, y); g.stroke();
+    g.beginPath(); g.moveTo(64, y + 22); g.lineTo(104, y); g.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAniso;
+  return tex;
+}
+
+function makeGrassTexture() {
+  const s = 256;
+  const c = document.createElement('canvas'); c.width = c.height = s;
+  const g = c.getContext('2d');
+  g.fillStyle = '#4d7a38';
+  g.fillRect(0, 0, s, s);
+  for (let i = 0; i < 4200; i++) {
+    g.fillStyle = `hsl(${95 + Math.random() * 25},${28 + Math.random() * 26}%,${16 + Math.random() * 22}%)`;
+    g.fillRect(Math.random() * s, Math.random() * s, 2, 2 + Math.random() * 3);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(60, 60);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAniso;
+  return tex;
+}
+
+const barkTex = makeBarkTextures();
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(240, 64),
+  new THREE.MeshStandardMaterial({ map: makeGrassTexture(), roughness: 1.0, metalness: 0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* ============================================================
+   3. WIND SHADER PATCH — GPU-only animation via onBeforeCompile
+   ============================================================ */
+
+// Shared uniform objects: one update drives every material (and depth materials)
+const windUniforms = {
+  uTime:         { value: 0 },
+  uWindStrength: { value: params.windStrength },
+  uWindDir:      { value: params.windDir * DEG2RAD },
+  uGustFreq:     { value: params.gustFreq },
+  uTreeHeight:   { value: 10 },
+};
+
+// Common GLSL: uniforms + gust curve + low-frequency sway + high-frequency flutter.
+// branchSway() depends only on world position, so leaves attached near a branch
+// vertex move with exactly the same phase as the branch itself.
+const WIND_COMMON = /* glsl */`
+uniform float uTime;
+uniform float uWindStrength;
+uniform float uWindDir;
+uniform float uGustFreq;
+uniform float uTreeHeight;
+
+vec3 windDirVec() {
+  return vec3(cos(uWindDir), 0.0, sin(uWindDir));
+}
+
+float gustFactor(float t) {
+  return 0.65
+    + 0.35 * sin(t * uGustFreq)
+    + 0.22 * sin(t * uGustFreq * 2.7 + 1.7)
+    + 0.13 * sin(t * uGustFreq * 5.3 + 4.2);
+}
+
+vec3 branchSway(vec3 wpos) {
+  float h = clamp(wpos.y / max(uTreeHeight, 0.001), 0.0, 1.0);
+  float amp = uWindStrength * 0.10 * uTreeHeight * h * h;
+  float g = gustFactor(uTime);
+  vec3 dir = windDirVec();
+  vec3 perp = vec3(-dir.z, 0.0, dir.x);
+  float phase = uTime * 1.4 + wpos.y * 0.35 + length(wpos.xz) * 0.4;
+  vec3 off = dir * (sin(phase) * g * amp);
+  off += perp * (sin(uTime * 2.3 + wpos.y * 0.6) * amp * 0.25);
+  off.y -= abs(sin(phase)) * amp * 0.18;
+  return off;
+}
+
+vec3 leafFlutter(vec3 wpos) {
+  float iphase = wpos.x * 12.9 + wpos.y * 7.7 + wpos.z * 5.3;
+  float amp = uWindStrength * 0.07;
+  float g = gustFactor(uTime * 1.35 + iphase * 0.05);
+  vec3 dir = windDirVec();
+  vec3 perp = vec3(-dir.z, 0.0, dir.x);
+  vec3 off = dir * (sin(uTime * 5.1 + iphase) * amp * (0.4 + 0.6 * g));
+  off += perp * (sin(uTime * 6.7 + iphase * 1.7) * amp * 0.6);
+  off.y += sin(uTime * 7.3 + iphase * 2.3) * amp * 0.5;
+  return off;
+}
+`;
+
+// Leaves: displace in WORLD space after the instance matrix is applied,
+// so the wind direction stays coherent no matter how each leaf is rotated.
+const LEAF_PROJECT = /* glsl */`
+vec4 mvPosition = vec4( transformed, 1.0 );
+#ifdef USE_INSTANCING
+  mvPosition = instanceMatrix * mvPosition;
+#endif
+vec4 wPos = modelMatrix * mvPosition;
+wPos.xyz += branchSway(wPos.xyz) + leafFlutter(wPos.xyz);
+mvPosition = viewMatrix * wPos;
+gl_Position = projectionMatrix * mvPosition;
+`;
+
+// kind: 'branch' (displace `transformed` before projection) or
+//       'leaf'   (displace world position after the instance matrix)
+function patchWind(material, kind) {
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, windUniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', WIND_COMMON + '\n#include <common>');
+    if (kind === 'branch') {
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\ntransformed += branchSway(transformed);'
+      );
+    } else {
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <project_vertex>',
+        LEAF_PROJECT
+      );
+    }
+  };
+  // Distinct cache keys prevent program-cache collisions between patched materials
+  material.customProgramCacheKey = () => 'wind-' + kind;
+}
+
+const branchMaterial = new THREE.MeshStandardMaterial({
+  map: barkTex.map,
+  bumpMap: barkTex.bump,
+  bumpScale: 0.8,
+  roughness: 0.9,
+  metalness: 0,
+  side: THREE.DoubleSide,
+});
+patchWind(branchMaterial, 'branch');
+
+const leafMaterial = new THREE.MeshStandardMaterial({
+  map: makeLeafTexture(),
+  alphaTest: 0.5,
+  side: THREE.DoubleSide,
+  roughness: 0.85,
+  metalness: 0,
+});
+patchWind(leafMaterial, 'leaf');
+
+// Custom depth materials so SHADOWS animate with the wind too.
+// The leaf depth material keeps the alpha-tested leaf silhouette.
+const branchDepthMaterial = new THREE.MeshDepthMaterial({
+  depthPacking: THREE.RGBADepthPacking,
+});
+patchWind(branchDepthMaterial, 'branch');
+
+const leafDepthMaterial = new THREE.MeshDepthMaterial({
+  depthPacking: THREE.RGBADepthPacking,
+  map: leafMaterial.map,
+  alphaTest: 0.5,
+});
+patchWind(leafDepthMaterial, 'leaf');
+
+const leafGeometry = new THREE.PlaneGeometry(0.34, 0.55);
+leafGeometry.translate(0, 0.24, 0); // pivot at the leaf base (stem)
+
+/* ============================================================
+   4. TREE GENERATION — seeded recursive branching
+   ============================================================ */
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const DOWN = new THREE.Vector3(0, -1, 0);
+const UP = new THREE.Vector3(0, 1, 0);
+const _t = new THREE.Vector3(), _n1 = new THREE.Vector3(), _n2 = new THREE.Vector3();
+const _refX = new THREE.Vector3(1, 0, 0), _refY = new THREE.Vector3(0, 1, 0);
+
+// Rotate `dir` away from itself by `angle` around a random azimuth
+function rotatedDir(dir, angle, azimuth, out) {
+  const ref = Math.abs(dir.y) > 0.95 ? _refX : _refY;
+  _n1.crossVectors(dir, ref).normalize();
+  _n2.crossVectors(dir, _n1);
+  return out.copy(dir).multiplyScalar(Math.cos(angle))
+    .addScaledVector(_n1, Math.cos(azimuth) * Math.sin(angle))
+    .addScaledVector(_n2, Math.sin(azimuth) * Math.sin(angle))
+    .normalize();
+}
+
+// Append one tapered tube (a whole branch) into the shared buffers
+function addTube(pts, radii, radial, vBase, pos, nor, uvA, idx) {
+  const rings = pts.length;
+  const base = pos.length / 3;
+  for (let i = 0; i < rings; i++) {
+    if (i === 0) _t.subVectors(pts[1], pts[0]);
+    else if (i === rings - 1) _t.subVectors(pts[i], pts[i - 1]);
+    else _t.subVectors(pts[i + 1], pts[i - 1]);
+    _t.normalize();
+    const ref = Math.abs(_t.y) > 0.98 ? _refX : _refY;
+    _n1.crossVectors(_t, ref).normalize();
+    _n2.crossVectors(_t, _n1);
+    const r = radii[i];
+    const v = vBase + i * 0.55;
+    for (let j = 0; j <= radial; j++) {
+      const a = (j / radial) * Math.PI * 2;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const nx = _n1.x * ca + _n2.x * sa;
+      const ny = _n1.y * ca + _n2.y * sa;
+      const nz = _n1.z * ca + _n2.z * sa;
+      pos.push(pts[i].x + nx * r, pts[i].y + ny * r, pts[i].z + nz * r);
+      nor.push(nx, ny, nz);
+      uvA.push((j / radial) * 2, v);
+    }
+  }
+  for (let i = 0; i < rings - 1; i++) {
+    for (let j = 0; j < radial; j++) {
+      const a = base + i * (radial + 1) + j;
+      const b = a + radial + 1;
+      idx.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+}
+
+function grow(start, dir, len, radius, level, ctx) {
+  const { p, rng, pos, nor, uvA, idx, anchors, state } = ctx;
+  const steps = level === 0 ? 5 : 3;
+  const radial = level === 0 ? 10 : 6;
+  const pts = [start.clone()];
+  const radii = [radius];
+  const d = dir.clone();
+  let cur = start.clone();
+  const stepLen = len / steps;
+
+  for (let i = 1; i <= steps; i++) {
+    // gravity droop bends the branch gradually toward -Y (trunk barely bends)
+    d.lerp(DOWN, p.droop * (level === 0 ? 0.05 : 0.22)).normalize();
+    // small random wiggle keeps branches organic
+    d.x += (rng() - 0.5) * 0.14;
+    d.z += (rng() - 0.5) * 0.14;
+    if (level === 0) d.lerp(UP, 0.1).normalize(); // trunk phototropism
+    d.normalize();
+    cur = cur.clone().addScaledVector(d, stepLen);
+    pts.push(cur);
+    radii.push(Math.max(radius * (1 - (i / steps) * 0.35), 0.01));
+    state.maxY = Math.max(state.maxY, cur.y);
+    state.maxR = Math.max(state.maxR, Math.hypot(cur.x, cur.z));
+  }
+
+  addTube(pts, radii, radial, level * 2.3 + rng() * 2, pos, nor, uvA, idx);
+  const end = pts[pts.length - 1];
+
+  // Terminal branch: emit leaf anchor points along its length
+  if (level >= p.depth - 1) {
+    if (anchors.length < 8000) {
+      for (let i = 1; i < pts.length; i++) {
+        anchors.push({ pos: pts[i], dir: pts[i].clone().sub(pts[i - 1]).normalize() });
+      }
+    }
+    return;
+  }
+
+  const childRadius = Math.max(radius * p.radiusDecay, 0.012);
+  if (level === 0) {
+    // Trunk: a leader continuing upward + side branches along its upper half
+    const ld = rotatedDir(d, 0.1 + rng() * 0.2, rng() * Math.PI * 2, new THREE.Vector3());
+    grow(end, ld, len * p.lengthDecay * 1.05, childRadius * 1.2, 1, ctx);
+    for (let s = 2; s <= 4; s++) {
+      const sd = pts[s].clone().sub(pts[s - 1]).normalize();
+      const ang = p.branchAngle * DEG2RAD * (0.85 + rng() * 0.3);
+      const bd = rotatedDir(sd, ang, rng() * Math.PI * 2, new THREE.Vector3());
+      grow(pts[s], bd, len * p.lengthDecay * (0.65 + 0.25 * (s / 5)),
+           childRadius * (0.7 + 0.15 * s), 1, ctx);
+    }
+  } else {
+    // Regular branch: 2-3 children fanned around the tip, sometimes one mid-branch
+    const n = 2 + (rng() < 0.7 ? 1 : 0);
+    const baseAz = rng() * Math.PI * 2;
+    for (let k = 0; k < n; k++) {
+      const az = baseAz + (k / n) * Math.PI * 2 + (rng() - 0.5) * 0.9;
+      const ang = p.branchAngle * DEG2RAD * (0.7 + rng() * 0.6);
+      const cd = rotatedDir(d, ang, az, new THREE.Vector3());
+      grow(end, cd, len * p.lengthDecay * (0.75 + rng() * 0.5), childRadius, level + 1, ctx);
+    }
+    if (rng() < 0.3 && anchors.length < 7800) {
+      const md = rotatedDir(d, p.branchAngle * DEG2RAD * 0.6, rng() * Math.PI * 2, new THREE.Vector3());
+      grow(pts[1], md, len * p.lengthDecay * 0.6, childRadius * 0.75, level + 1, ctx);
+    }
+  }
+}
+
+function generateTree(p) {
+  const rng = mulberry32(p.seed >>> 0);
+  const pos = [], nor = [], uvA = [], idx = [];
+  const anchors = [];
+  const state = { maxY: 0, maxR: 0 };
+  const ctx = { p, rng, pos, nor, uvA, idx, anchors, state };
+
+  const start = new THREE.Vector3(0, -0.03, 0);
+  const dir = new THREE.Vector3((rng() - 0.5) * 0.12, 1, (rng() - 0.5) * 0.12).normalize();
+  grow(start, dir, p.trunkHeight, p.trunkRadius, 0, ctx);
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvA, 2));
+  geometry.setIndex(idx);
+  return { geometry, anchors, maxY: state.maxY, maxR: state.maxR };
+}
+
+/* ---------- scene object lifecycle (dispose old, build new) ---------- */
+
+let branchMesh = null;
+let leafMesh = null;
+let leafAnchors = [];
+let leafT = null;   // per-leaf random value driving color variation
+let treeMaxR = 6;   // horizontal extent of the current tree
+
+function rebuildTree() {
+  const data = generateTree(params);
+  leafAnchors = data.anchors;
+  treeMaxR = data.maxR;
+
+  if (branchMesh) {
+    branchMesh.geometry.dispose();
+    treeGroup.remove(branchMesh);
+  }
+  branchMesh = new THREE.Mesh(data.geometry, branchMaterial);
+  branchMesh.castShadow = true;
+  branchMesh.receiveShadow = true;
+  branchMesh.customDepthMaterial = branchDepthMaterial;
+  treeGroup.add(branchMesh);
+
+  windUniforms.uTreeHeight.value = Math.max(data.maxY, 1);
+  rebuildLeaves();
+  fitShadow();
+  updateSun();
+}
+
+function rebuildLeaves() {
+  if (leafMesh) {
+    treeGroup.remove(leafMesh);
+    leafMesh.dispose(); // frees instanceMatrix / instanceColor buffers
+    leafMesh = null;
+  }
+  const n = params.leafCount | 0;
+  if (n === 0 || leafAnchors.length === 0) return;
+
+  leafT = new Float32Array(n);
+  leafMesh = new THREE.InstancedMesh(leafGeometry, leafMaterial, n);
+  leafMesh.castShadow = true;
+  leafMesh.frustumCulled = false; // instances span the whole tree
+  leafMesh.customDepthMaterial = leafDepthMaterial;
+
+  const lrng = mulberry32((params.seed ^ 0x9E3779B9) >>> 0);
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < n; i++) {
+    const a = leafAnchors[i % leafAnchors.length];
+    leafT[i] = lrng();
+    dummy.position.set(
+      a.pos.x + (lrng() - 0.5) * 0.9 + a.dir.x * 0.08,
+      a.pos.y + (lrng() - 0.5) * 0.6 + a.dir.y * 0.08,
+      a.pos.z + (lrng() - 0.5) * 0.9 + a.dir.z * 0.08
+    );
+    dummy.rotation.set(
+      (lrng() - 0.5) * 0.6,          // slight random pitch
+      lrng() * Math.PI * 2,          // random yaw around the tree
+      -(0.35 + lrng() * 0.85)        // outward tilt / droop
+    );
+    dummy.scale.setScalar(0.9 + lrng() * 0.9);
+    dummy.updateMatrix();
+    leafMesh.setMatrixAt(i, dummy.matrix);
+  }
+  recolorLeaves();
+  treeGroup.add(leafMesh);
+}
+
+function recolorLeaves() {
+  if (!leafMesh) return;
+  const c = new THREE.Color();
+  for (let i = 0; i < leafMesh.count; i++) {
+    const t = leafT[i];
+    if (params.autumn) {
+      if (t > 0.85) c.setHSL(0.155, 0.9, 0.55);            // bright yellow
+      else c.setHSL(0.135 - 0.115 * t, 0.8, 0.42 + 0.08 * t); // orange -> red
+    } else {
+      c.setHSL(0.30 - 0.08 * t, 0.5 + 0.2 * t, 0.34 + 0.16 * t); // green -> yellow-green
+    }
+    leafMesh.setColorAt(i, c);
+  }
+  leafMesh.instanceColor.needsUpdate = true;
+}
+
+/* ---------- sun + tightly fitted shadow camera ---------- */
+
+function fitShadow() {
+  const d = Math.max(treeMaxR * 2.2, windUniforms.uTreeHeight.value * 0.8) + 3;
+  const cam = sun.shadow.camera;
+  cam.left = -d; cam.right = d; cam.top = d; cam.bottom = -d;
+  cam.near = 1; cam.far = 140;
+  cam.updateProjectionMatrix();
+  treeCenter.set(0, windUniforms.uTreeHeight.value * 0.45, 0);
+}
+
+function updateSun() {
+  const el = params.sunElev * DEG2RAD, az = params.sunAzim * DEG2RAD;
+  sunDir.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
+  sun.position.copy(treeCenter).addScaledVector(sunDir, 40);
+  sun.target.position.copy(treeCenter);
+  sun.target.updateMatrixWorld();
+}
+
+/* ============================================================
+   5. UI — plain HTML inputs wired to params
+   ============================================================ */
+
+const sliderDefs = [
+  ['depth',        'Branch depth',    3, 7, 1,    v => v,                'tree'],
+  ['leafCount',    'Leaf count',      0, 20000, 500, v => v,               'leaves'],
+  ['trunkHeight',  'Trunk height',    3, 10, 0.1,  v => v.toFixed(1),     'tree'],
+  ['trunkRadius',  'Trunk radius',    0.15, 0.7, 0.01, v => v.toFixed(2),   'tree'],
+  ['branchAngle',  'Branch angle',    15, 70, 1,    v => v + '\u00B0',     'tree'],
+  ['lengthDecay',  'Length decay',    0.55, 0.95, 0.01, v => v.toFixed(2),  'tree'],
+  ['radiusDecay',  'Radius decay',    0.45, 0.8, 0.01, v => v.toFixed(2),   'tree'],
+  ['droop',        'Gravity droop',   0, 0.6, 0.01,  v => v.toFixed(2),     'tree'],
+  ['windStrength', 'Wind strength',   0, 3, 0.05,   v => v.toFixed(2),     'wind'],
+  ['windDir',      'Wind direction',  0, 360, 1,    v => v + '\u00B0',     'wind'],
+  ['gustFreq',     'Gust frequency',  0.1, 3, 0.05, v => v.toFixed(2),     'wind'],
+  ['sunElev',      'Sun elevation',   8, 85, 1,     v => v + '\u00B0',     'sun'],
+  ['sunAzim',      'Sun azimuth',     0, 360, 1,    v => v + '\u00B0',     'sun'],
+];
+
+function applyParam(key, action) {
+  if (action === 'tree') rebuildTree();
+  else if (action === 'leaves') rebuildLeaves();
+  else if (action === 'wind') {
+    windUniforms.uWindStrength.value = params.windStrength;
+    windUniforms.uWindDir.value = params.windDir * DEG2RAD;
+    windUniforms.uGustFreq.value = params.gustFreq;
+  } else if (action === 'sun') updateSun();
+}
+
+const slidersEl = document.getElementById('sliders');
+for (const [key, label, min, max, step, fmt, action] of sliderDefs) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML =
+    `<label>${label}</label>` +
+    `<input type="range" min="${min}" max="${max}" step="${step}" value="${params[key]}">` +
+    `<span class="val"></span>`;
+  const input = row.querySelector('input');
+  const val = row.querySelector('.val');
+  val.textContent = fmt(params[key]);
+  input.addEventListener('input', () => {
+    const v = parseFloat(input.value);
+    params[key] = v;
+    val.textContent = fmt(v);
+    applyParam(key, action);
+  });
+  slidersEl.appendChild(row);
+}
+
+const seedEl = document.getElementById('seed');
+seedEl.addEventListener('input', () => {
+  const v = parseInt(seedEl.value, 10);
+  if (Number.isFinite(v)) {
+    params.seed = v;
+    rebuildTree();
+  }
+});
+document.getElementById('regen').addEventListener('click', () => {
+  params.seed = (Math.random() * 999999) | 0;
+  seedEl.value = params.seed;
+  rebuildTree();
+});
+document.getElementById('shadows').addEventListener('change', (e) => {
+  sun.castShadow = e.target.checked;
+});
+document.getElementById('autumn').addEventListener('change', (e) => {
+  params.autumn = e.target.checked;
+  recolorLeaves();
+});
+
+/* ============================================================
+   6. LOOP — animation, FPS counter, resize
+   ============================================================ */
+
+const fpsEl = document.getElementById('fps');
+const clock = new THREE.Clock();
+let frames = 0;
+let fpsLast = performance.now();
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  windUniforms.uTime.value += dt;
+  controls.update();
+  renderer.render(scene, camera);
+
+  frames++;
+  const now = performance.now();
+  if (now - fpsLast >= 500) {
+    fpsEl.textContent = Math.round((frames * 1000) / (now - fpsLast)) + ' fps';
+    frames = 0;
+    fpsLast = now;
+  }
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// First build
+rebuildTree();
+</script>
+</body>
+</html>

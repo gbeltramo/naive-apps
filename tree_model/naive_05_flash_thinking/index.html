@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Procedural 3D Tree Generator</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#a9c6e0;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    color:#dfe8f0;-webkit-font-smoothing:antialiased}
+  #scene{position:fixed;inset:0}
+  #scene canvas{display:block;width:100%;height:100%;touch-action:none}
+
+  /* ---------- control panel ---------- */
+  #panel{position:fixed;top:10px;left:10px;width:270px;max-height:calc(100% - 20px);
+    overflow-y:auto;overscroll-behavior:contain;padding:12px 14px 14px;
+    background:rgba(10,16,24,.82);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    border:1px solid rgba(255,255,255,.13);border-radius:12px;
+    box-shadow:0 10px 40px rgba(0,0,0,.4);z-index:5;font-size:12px;
+    scrollbar-width:thin;scrollbar-color:#3a4a5a transparent}
+  #panel::-webkit-scrollbar{width:8px}
+  #panel::-webkit-scrollbar-thumb{background:#3a4a5a;border-radius:4px}
+  .title{font-size:14px;font-weight:700;letter-spacing:.02em}
+  .title .sub{display:block;font-size:10px;font-weight:400;color:#8fa5b8;margin-top:3px;letter-spacing:.04em}
+  h2{font-size:10px;text-transform:uppercase;letter-spacing:.14em;color:#7fd0a0;
+    margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,.09)}
+  .row{margin:7px 0}
+  .lab{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;gap:8px}
+  .lab label{color:#a9bccc;font-size:11px}
+  .v{color:#e6f0f8;font-variant-numeric:tabular-nums;font-size:11px;white-space:nowrap}
+  input[type=range]{width:100%;height:16px;margin:0;-webkit-appearance:none;appearance:none;
+    background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
+    background:linear-gradient(90deg,#3f6f8f,#79c79b)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;
+    margin-top:-4.5px;border-radius:50%;background:#eaf4ff;border:2px solid #4a8ab0;
+    box-shadow:0 1px 4px rgba(0,0,0,.5)}
+  input[type=range]::-moz-range-track{height:4px;border-radius:2px;
+    background:linear-gradient(90deg,#3f6f8f,#79c79b)}
+  input[type=range]::-moz-range-thumb{width:11px;height:11px;border-radius:50%;
+    background:#eaf4ff;border:2px solid #4a8ab0}
+  .seedrow{display:flex;gap:6px;align-items:center;margin:6px 0 10px}
+  .seedrow label{font-size:11px;color:#a9bccc}
+  #seed{width:76px;background:#0d1620;color:#eaf4ff;border:1px solid #2c3d4d;border-radius:6px;
+    padding:5px 6px;font:inherit;font-size:12px}
+  #seed:focus{outline:1px solid #4a8ab0}
+  #regen{flex:1;background:#2f7d54;color:#eafff2;border:0;border-radius:6px;padding:6px 8px;
+    font:inherit;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:.04em}
+  #regen:hover{background:#389966}
+  #regen:active{transform:translateY(1px)}
+  .toggles{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px}
+  .toggles label{display:flex;gap:6px;align-items:center;font-size:11px;color:#a9bccc;cursor:pointer}
+  input[type=checkbox]{accent-color:#4fae7c;width:14px;height:14px;cursor:pointer}
+
+  /* ---------- hud ---------- */
+  #fps{position:fixed;top:10px;right:10px;padding:6px 10px;background:rgba(10,16,24,.75);
+    border:1px solid rgba(255,255,255,.12);border-radius:8px;font-size:12px;
+    font-variant-numeric:tabular-nums;z-index:5;letter-spacing:.05em}
+  #hint{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);padding:6px 12px;
+    background:rgba(10,16,24,.6);border-radius:20px;font-size:11px;color:#b9c9d8;
+    z-index:5;pointer-events:none;white-space:nowrap}
+  @media (max-width:640px){#panel{width:226px;font-size:11px}#hint{font-size:10px}}
+</style>
+</head>
+<body>
+
+<div id="scene"></div>
+
+<div id="panel">
+  <div class="title">🌳 Procedural Tree
+    <span class="sub">three.js · canvas textures · GPU wind · moving shadows</span>
+  </div>
+
+  <h2>Tree</h2>
+  <div class="seedrow">
+    <label for="seed">Seed</label>
+    <input id="seed" type="number" value="1337" step="1">
+    <button id="regen" title="Rebuild the tree with this seed">Regenerate</button>
+  </div>
+  <div class="row"><div class="lab"><label for="trunkH">Trunk height</label><span class="v" id="v-trunkH"></span></div><input id="trunkH" type="range" min="1.5" max="6" step="0.1" value="3.4"></div>
+  <div class="row"><div class="lab"><label for="trunkR">Trunk radius</label><span class="v" id="v-trunkR"></span></div><input id="trunkR" type="range" min="0.08" max="0.5" step="0.01" value="0.22"></div>
+  <div class="row"><div class="lab"><label for="depth">Branching depth (3–7)</label><span class="v" id="v-depth"></span></div><input id="depth" type="range" min="3" max="7" step="1" value="5"></div>
+  <div class="row"><div class="lab"><label for="angle">Branch angle</label><span class="v" id="v-angle"></span></div><input id="angle" type="range" min="15" max="65" step="1" value="38"></div>
+  <div class="row"><div class="lab"><label for="lenDecay">Length decay</label><span class="v" id="v-lenDecay"></span></div><input id="lenDecay" type="range" min="0.55" max="0.92" step="0.01" value="0.76"></div>
+  <div class="row"><div class="lab"><label for="radDecay">Radius decay</label><span class="v" id="v-radDecay"></span></div><input id="radDecay" type="range" min="0.4" max="0.85" step="0.01" value="0.62"></div>
+  <div class="row"><div class="lab"><label for="droop">Gravity droop</label><span class="v" id="v-droop"></span></div><input id="droop" type="range" min="0" max="0.6" step="0.01" value="0.18"></div>
+  <div class="row"><div class="lab"><label for="leaves">Leaf count (2k–20k)</label><span class="v" id="v-leaves"></span></div><input id="leaves" type="range" min="2000" max="20000" step="500" value="6000"></div>
+
+  <h2>Wind</h2>
+  <div class="row"><div class="lab"><label for="wind">Wind strength</label><span class="v" id="v-wind"></span></div><input id="wind" type="range" min="0" max="1.5" step="0.05" value="0.55"></div>
+  <div class="row"><div class="lab"><label for="windDir">Wind direction</label><span class="v" id="v-windDir"></span></div><input id="windDir" type="range" min="0" max="360" step="1" value="45"></div>
+  <div class="row"><div class="lab"><label for="gust">Gust frequency</label><span class="v" id="v-gust"></span></div><input id="gust" type="range" min="0.1" max="2" step="0.05" value="0.65"></div>
+
+  <h2>Sun</h2>
+  <div class="row"><div class="lab"><label for="sunEl">Sun elevation</label><span class="v" id="v-sunEl"></span></div><input id="sunEl" type="range" min="5" max="85" step="1" value="42"></div>
+  <div class="row"><div class="lab"><label for="sunAz">Sun azimuth</label><span class="v" id="v-sunAz"></span></div><input id="sunAz" type="range" min="0" max="360" step="1" value="130"></div>
+
+  <h2>Display</h2>
+  <div class="toggles">
+    <label><input id="shadows" type="checkbox" checked> Shadows</label>
+    <label><input id="autumn" type="checkbox"> Autumn colors</label>
+  </div>
+</div>
+
+<div id="fps">-- FPS</div>
+<div id="hint">drag: orbit &nbsp;·&nbsp; scroll: zoom &nbsp;·&nbsp; right-drag: pan</div>
+
+<!-- pinned three.js import map -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const $ = (id) => document.getElementById(id);
+const D2R = Math.PI / 180;
+const TAU = Math.PI * 2;
+
+/* ==========================================================================
+   SECTION 1 — SETUP (renderer, scene, camera, controls, lights)
+   The tree is placed at the world origin and never transformed, so object
+   space == world space; the wind shader can therefore work purely on the
+   positions produced by the instance matrix.
+   ========================================================================== */
+const container = $('scene');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xc3d6e8, 40, 140);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 600);
+camera.position.set(9.5, 6.0, 11.5);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.target.set(0, 3.0, 0);
+controls.minDistance = 2.0;
+controls.maxDistance = 160;
+controls.maxPolarAngle = Math.PI * 0.495;   // keep the camera above ground
+controls.update();
+
+// ambient fill: sky above / grass below
+const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x54703a, 0.75);
+scene.add(hemi);
+
+// one shadow-casting sun; its ortho shadow camera is re-fitted on rebuild
+const sun = new THREE.DirectionalLight(0xfff1da, 2.8);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.03;
+scene.add(sun, sun.target);
+
+/* ==========================================================================
+   SECTION 2 — TEXTURES (everything is drawn with canvas 2D, no image files)
+   ========================================================================== */
+const texAnisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+
+function canvasTex(cv, srgb, rx, ry) {
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(rx || 1, ry || 1);
+  t.anisotropy = texAnisotropy;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;   // colour maps are sRGB
+  return t;                                          // normal maps stay linear
+}
+
+// --- bark colour: brown base + tonal blotches + vertical fissures + lichen ---
+function makeBarkCanvas() {
+  const W = 512, H = 512;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  const rnd = mulberry32(7);
+
+  x.fillStyle = '#6a5036'; x.fillRect(0, 0, W, H);
+
+  for (let i = 0; i < 700; i++) {                    // broad mottling
+    const t = rnd();
+    x.fillStyle = t < 0.5
+      ? `rgba(38,26,16,${(0.03 + rnd() * 0.07).toFixed(3)})`
+      : `rgba(152,128,98,${(0.03 + rnd() * 0.07).toFixed(3)})`;
+    x.beginPath();
+    x.ellipse(rnd() * W, rnd() * H, 6 + rnd() * 46, 14 + rnd() * 140, 0, 0, TAU);
+    x.fill();
+  }
+
+  for (let i = 0; i < 460; i++) {                    // vertical fissures
+    const pts = []; let cx = rnd() * W;
+    for (let y = -24; y <= H + 24; y += 12) { pts.push([cx, y]); cx += (rnd() - 0.5) * 8; }
+    const dark = rnd() < 0.7;
+    const g = dark ? 18 + rnd() * 36 : 120 + rnd() * 70;
+    x.strokeStyle = `rgba(${g | 0},${(g * 0.78) | 0},${(g * 0.58) | 0},${(0.18 + rnd() * 0.5).toFixed(3)})`;
+    x.lineWidth = 0.5 + rnd() * 3.2;
+    for (const ox of [-W, 0, W]) {                   // draw 3× so it tiles seamlessly
+      x.beginPath(); x.moveTo(pts[0][0] + ox, pts[0][1]);
+      for (let k = 1; k < pts.length; k++) x.lineTo(pts[k][0] + ox, pts[k][1]);
+      x.stroke();
+    }
+  }
+
+  for (let i = 0; i < 520; i++) {                    // pale lichen speckles
+    x.fillStyle = `rgba(168,180,140,${(0.05 + rnd() * 0.2).toFixed(3)})`;
+    x.beginPath(); x.arc(rnd() * W, rnd() * H, 0.6 + rnd() * 2.4, 0, TAU); x.fill();
+  }
+  return c;
+}
+
+// --- normal-like bark map derived from the luminance of the colour canvas ---
+function makeNormalCanvas(src, strength) {
+  const W = src.width, H = src.height;
+  const sctx = src.getContext('2d');
+  const d = sctx.getImageData(0, 0, W, H).data;
+  const hgt = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) hgt[i] = (0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]) / 255;
+
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  const out = x.createImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    const ym = ((y - 1 + H) % H) * W, yp = ((y + 1) % H) * W, yw = y * W;
+    for (let px = 0; px < W; px++) {
+      const xm = (px - 1 + W) % W, xp = (px + 1) % W;
+      let nx = -(hgt[yw + xp] - hgt[yw + xm]) * strength;
+      let ny = -(hgt[yp + px] - hgt[ym + px]) * strength;
+      let nz = 1;
+      const l = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      const i = (y * W + px) * 4;
+      out.data[i]     = (nx / l * 0.5 + 0.5) * 255;
+      out.data[i + 1] = (ny / l * 0.5 + 0.5) * 255;
+      out.data[i + 2] = (nz / l * 0.5 + 0.5) * 255;
+      out.data[i + 3] = 255;
+    }
+  }
+  x.putImageData(out, 0, 0);
+  return c;
+}
+
+// --- leaf: alpha cut-out shape, pale so per-instance colours dominate ---
+function makeLeafCanvas() {
+  const S = 128;
+  const c = document.createElement('canvas'); c.width = c.height = S;
+  const x = c.getContext('2d');
+  x.clearRect(0, 0, S, S);
+  x.save();
+  x.translate(S / 2, S / 2);
+
+  const path = () => {                              // pointed, slightly asymmetric blade
+    x.beginPath();
+    x.moveTo(0, -58);
+    x.bezierCurveTo(30, -40, 45, -6, 26, 26);
+    x.bezierCurveTo(14, 44, 5, 54, 0, 60);
+    x.bezierCurveTo(-5, 54, -14, 44, -26, 26);
+    x.bezierCurveTo(-45, -6, -30, -40, 0, -58);
+    x.closePath();
+  };
+
+  const grd = x.createLinearGradient(-42, -52, 42, 52);
+  grd.addColorStop(0, '#f4f9ea');
+  grd.addColorStop(0.55, '#e4f0d0');
+  grd.addColorStop(1, '#d4e7ba');
+  path(); x.fillStyle = grd; x.fill();
+
+  x.save(); path(); x.clip();                       // keep veins inside the blade
+  x.strokeStyle = 'rgba(120,150,90,0.55)'; x.lineWidth = 1.7;
+  x.beginPath(); x.moveTo(0, -54); x.quadraticCurveTo(3, 0, 0, 56); x.stroke();
+  x.lineWidth = 1.0; x.strokeStyle = 'rgba(120,150,90,0.38)';
+  for (let i = 0; i < 6; i++) {
+    const y = -40 + i * 15, ex = 25 - i * 1.6;
+    x.beginPath(); x.moveTo(0, y); x.quadraticCurveTo(14, y + 7, ex, y + 15); x.stroke();
+    x.beginPath(); x.moveTo(0, y); x.quadraticCurveTo(-14, y + 7, -ex, y + 15); x.stroke();
+  }
+  x.restore();
+  x.restore();
+  return c;
+}
+
+// --- grass: noisy green base + hundreds of short blade strokes (tiles) ---
+function makeGrassCanvas() {
+  const W = 256, H = 256;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  const rnd = mulberry32(21);
+  const img = x.createImageData(W, H);
+  for (let i = 0; i < W * H; i++) {
+    const n = (rnd() - 0.5) * 26, n2 = (rnd() - 0.5) * 22, n3 = (rnd() - 0.5) * 18;
+    img.data[i * 4]     = Math.max(0, Math.min(255, 96 + n));
+    img.data[i * 4 + 1] = Math.max(0, Math.min(255, 128 + n2));
+    img.data[i * 4 + 2] = Math.max(0, Math.min(255, 66 + n3));
+    img.data[i * 4 + 3] = 255;
+  }
+  x.putImageData(img, 0, 0);
+
+  for (let i = 0; i < 1000; i++) {
+    const px = rnd() * W, py = rnd() * H;
+    const len = 3 + rnd() * 9, a = -Math.PI / 2 + (rnd() - 0.5) * 1.0;
+    x.strokeStyle = rnd() < 0.5
+      ? `rgba(58,84,40,${(0.25 + rnd() * 0.4).toFixed(3)})`
+      : `rgba(152,180,106,${(0.20 + rnd() * 0.35).toFixed(3)})`;
+    x.lineWidth = 0.7 + rnd() * 1.4;
+    for (const [ox, oy] of [[0, 0], [-W, 0], [W, 0], [0, -H], [0, H]]) {
+      x.beginPath();
+      x.moveTo(px + ox, py + oy);
+      x.lineTo(px + ox + Math.cos(a) * len, py + oy + Math.sin(a) * len);
+      x.stroke();
+    }
+  }
+  return c;
+}
+
+// --- sky: vertical gradient used as scene.background ---
+function makeSkyCanvas() {
+  const c = document.createElement('canvas'); c.width = 8; c.height = 512;
+  const x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 0, 0, 512);
+  g.addColorStop(0.00, '#3d78bd');
+  g.addColorStop(0.40, '#7fadd8');
+  g.addColorStop(0.68, '#bcd6ea');
+  g.addColorStop(0.86, '#dfeaf2');
+  g.addColorStop(1.00, '#e9f0f5');
+  x.fillStyle = g; x.fillRect(0, 0, 8, 512);
+  return c;
+}
+
+const T = {};                                        // texture cache (lives for the page)
+function createTextures() {
+  const bark = makeBarkCanvas();
+  T.bark       = canvasTex(bark, true, 1.6, 1.6);
+  T.barkNormal = canvasTex(makeNormalCanvas(bark, 2.6), false, 1.6, 1.6);
+  T.leaf       = canvasTex(makeLeafCanvas(), true, 1, 1);
+  T.grass      = canvasTex(makeGrassCanvas(), true, 80, 80);
+  T.sky        = canvasTex(makeSkyCanvas(), true, 1, 1);
+}
+
+// ground plane: receives shadows, tiles the grass texture
+function createGround() {
+  const mat = new THREE.MeshStandardMaterial({ map: T.grass, roughness: 1, metalness: 0 });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), mat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+}
+
+/* ==========================================================================
+   SECTION 3 — SEEDED RNG + TREE GENERATION
+   A recursive grower: every node emits one tapered cylinder (plus a small
+   joint sphere) and spawns 2–3 children whose directions are rolled around
+   the parent axis, tilted by the branch angle and pulled down by gravity.
+   All cylinders are merged into ONE BufferGeometry for a single draw call.
+   ========================================================================== */
+function mulberry32(a) {                            // tiny deterministic PRNG
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const P = {                                          // live parameter set
+  seed: 1337, trunkH: 3.4, trunkR: 0.22, depth: 5,
+  angle: 38, lenDecay: 0.76, radDecay: 0.62, droop: 0.18,
+  leaves: 6000,
+  wind: 0.55, windDir: 45, gust: 0.65,
+  sunEl: 42, sunAz: 130,
+  shadows: true, autumn: false
+};
+
+function growTree(p) {
+  const rng = mulberry32(p.seed >>> 0);
+  const parts = [];                                 // geometries to merge
+  const sites = [];                                 // {p,d,r} leaf attachment points
+  const Y = new THREE.Vector3(0, 1, 0);
+  const X = new THREE.Vector3(1, 0, 0);
+  const ONE = new THREE.Vector3(1, 1, 1);
+
+  function addLimb(a, b, r0, r1) {
+    const dir = new THREE.Vector3().subVectors(b, a);
+    const len = dir.length();
+    if (len < 1e-4) return;
+    const q = new THREE.Quaternion().setFromUnitVectors(Y, dir.multiplyScalar(1 / len));
+    const mid = a.clone().add(b).multiplyScalar(0.5);
+    const cyl = new THREE.CylinderGeometry(r1, r0, len, 7, 1, false);
+    cyl.applyMatrix4(new THREE.Matrix4().compose(mid, q, ONE));
+    parts.push(cyl);
+    if (r0 > 0.018) {                              // hide the cap seam at joints
+      const s = new THREE.SphereGeometry(r0 * 1.05, 7, 5);
+      s.translate(a.x, a.y, a.z);
+      parts.push(s);
+    }
+  }
+
+  function childDir(parent, angle, roll) {
+    const ref = Math.abs(parent.y) > 0.98 ? X : Y;
+    const side = new THREE.Vector3().crossVectors(parent, ref).normalize();
+    const d = parent.clone().applyAxisAngle(side, angle);
+    d.applyAxisAngle(parent, roll);                 // spread children around the axis
+    d.y -= p.droop;                                 // gravity droop
+    d.normalize();
+    return d;
+  }
+
+  function grow(origin, dir, length, radius, depth) {
+    const end = origin.clone().addScaledVector(dir, length);
+    const tipR = radius * p.radDecay;
+    addLimb(origin, end, radius, tipR);
+
+    if (depth >= p.depth) { sites.push({ p: end, d: dir.clone(), r: tipR }); return; }
+    if (depth >= p.depth - 1) sites.push({ p: end, d: dir.clone(), r: tipR }); // last two levels carry leaves
+
+    const n = depth === 0 ? 3 : (rng() < 0.3 ? 3 : 2);
+    for (let i = 0; i < n; i++) {
+      const leader = i === 0;                       // first child continues upward
+      const ang = (leader ? p.angle * 0.45 : p.angle) * (0.75 + rng() * 0.5) * D2R;
+      const roll = rng() * TAU;
+      const cl = length * p.lenDecay * (0.85 + rng() * 0.3);
+      const cr = tipR * (leader ? 1.0 : 0.88);
+      if (cl > 0.05 && cr > 0.006) grow(end, childDir(dir, ang, roll), cl, cr, depth + 1);
+    }
+  }
+
+  const baseDir = new THREE.Vector3((rng() - 0.5) * 0.14, 1, (rng() - 0.5) * 0.14).normalize();
+  grow(new THREE.Vector3(0, -0.2, 0), baseDir, p.trunkH, p.trunkR, 0);
+
+  const merged = parts.length ? mergeGeometries(parts, false) : null;
+  if (merged) for (const g of parts) g.dispose();   // sources no longer needed
+  return { geometry: merged, sites };
+}
+
+/* ==========================================================================
+   SECTION 4 — WIND SHADER PATCH (onBeforeCompile, CPU does no vertex work)
+   The wind is added AFTER the instance matrix, in tree/world space, so every
+   leaf of a branch moves coherently while still getting its own flutter.
+   The identical code is injected into MeshStandardMaterial and into the
+   MeshDepthMaterial customDepthMaterial, so shadows track the animation.
+   ========================================================================== */
+const WIND = {                                       // shared uniform objects
+  uTime:       { value: 0 },
+  uStrength:   { value: 0.55 },
+  uAngle:      { value: Math.PI * 0.25 },
+  uGustFreq:   { value: 0.65 },
+  uTreeHeight: { value: 4.5 },
+  uTreeRadius: { value: 2.0 }
+};
+
+function windDeclarations(instanced) {
+  return `
+uniform float uTime;
+uniform float uStrength;
+uniform float uAngle;
+uniform float uGustFreq;
+uniform float uTreeHeight;
+uniform float uTreeRadius;
+${instanced ? 'attribute float aPhase;' : ''}
+
+// Smooth gust: normalized sum of travelling sines over space and time.
+float windGust( vec3 p ) {
+  float f = uGustFreq;
+  float g = sin( uTime * f + p.x * 0.07 + p.z * 0.05 )
+          + 0.60 * sin( uTime * f * 1.7 - p.z * 0.09 + 1.7 )
+          + 0.40 * sin( uTime * f * 2.6 + p.x * 0.05 - 0.6 );
+  g *= 0.5;
+  return smoothstep( -0.7, 0.9, g );                // 0..1, C1-smooth
+}
+
+// Low-frequency sway: amplitude grows with height and distance from the trunk.
+vec3 windDisplacement( vec3 p, float gust ) {
+  vec2 wd = vec2( cos( uAngle ), sin( uAngle ) );
+  float hf = pow( clamp( p.y / max( uTreeHeight, 0.001 ), 0.0, 1.0 ), 1.4 );
+  float rf = 0.25 + 0.75 * clamp( length( p.xz ) / max( uTreeRadius, 0.001 ), 0.0, 1.0 );
+  float ph = p.y * 0.55 + p.x * 0.13 + p.z * 0.11;
+  float sway = 0.65 * sin( uTime * 1.05 + ph ) + 0.35 * sin( uTime * 0.57 + ph * 1.63 + 2.1 );
+  float amp = uStrength * uTreeHeight * 0.09 * hf * rf * gust;
+  vec3 off = vec3( wd.x, 0.0, wd.y ) * ( sway * amp );
+  vec2 pp = vec2( -wd.y, wd.x );
+  off.xz += pp * ( 0.30 * sin( uTime * 0.73 + ph * 0.9 + 1.4 ) * amp );
+  off.y += 0.05 * uStrength * hf * gust * sin( uTime * 0.9 + ph * 0.7 );
+  return off;
+}
+${instanced ? `
+// High-frequency flutter with a per-instance phase (leaves only).
+vec3 leafFlutter( float gust ) {
+  float ph = aPhase;
+  vec3 f = vec3(
+    sin( uTime * 6.1 + ph ) * 0.55 + sin( uTime * 9.7 + ph * 2.0 ) * 0.25,
+    sin( uTime * 7.3 + ph * 1.37 ) * 0.40,
+    cos( uTime * 5.4 + ph * 0.71 ) * 0.45
+  );
+  return f * ( 0.06 * uStrength * ( 0.35 + 0.65 * gust ) );
+}
+
+vec3 windOffsetAt( vec3 p ) {
+  float g = windGust( p );
+  return windDisplacement( p, g ) + leafFlutter( g );
+}
+` : `
+vec3 windOffsetAt( vec3 p ) {
+  return windDisplacement( p, windGust( p ) );
+}
+`}
+`;
+}
+
+// Replacement for #include <project_vertex>: instance matrix FIRST, then wind.
+const WIND_PROJECT_VERTEX = `
+vec4 mvPosition = vec4( transformed, 1.0 );
+#ifdef USE_BATCHING
+	mvPosition = batchingMatrix * mvPosition;
+#endif
+#ifdef USE_INSTANCING
+	mvPosition = instanceMatrix * mvPosition;
+#endif
+mvPosition.xyz += windOffsetAt( mvPosition.xyz );
+mvPosition = modelViewMatrix * mvPosition;
+gl_Position = projectionMatrix * mvPosition;
+`;
+
+// Replacement for #include <worldpos_vertex>: shadow-map lookups and fog then
+// use the SAME displaced position as the one actually rendered.
+const WIND_WORLDPOS_VERTEX = `
+vec4 worldPosition = vec4( transformed, 1.0 );
+#ifdef USE_BATCHING
+	worldPosition = batchingMatrix * worldPosition;
+#endif
+#ifdef USE_INSTANCING
+	worldPosition = instanceMatrix * worldPosition;
+#endif
+worldPosition.xyz += windOffsetAt( worldPosition.xyz );
+worldPosition = modelMatrix * worldPosition;
+`;
+
+function patchWind(material, instanced, role) {
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, WIND);            // share the uniform objects
+    let vs = shader.vertexShader;
+    if (vs.includes('#include <project_vertex>')) {
+      vs = vs.replace('#include <project_vertex>', WIND_PROJECT_VERTEX);
+    }
+    if (vs.includes('#include <worldpos_vertex>')) {
+      vs = vs.replace('#include <worldpos_vertex>', WIND_WORLDPOS_VERTEX);
+    }
+    shader.vertexShader = windDeclarations(instanced) + '\n' + vs;
+  };
+  material.customProgramCacheKey = () => 'tree-wind-' + role;
+}
+
+/* ==========================================================================
+   SECTION 5 — MATERIALS, MESHES, REBUILD + DISPOSAL
+   ========================================================================== */
+let barkMat = null, barkDepth = null, leafMat = null, leafDepth = null;
+let branchMesh = null, leafMesh = null;
+let leafSeeds = null, leafReach = 0;
+let treeBox = new THREE.Box3();
+
+function createMaterials() {
+  barkMat = new THREE.MeshStandardMaterial({
+    map: T.bark,
+    normalMap: T.barkNormal,
+    normalScale: new THREE.Vector2(0.8, 0.8),
+    roughness: 0.95, metalness: 0
+  });
+  patchWind(barkMat, false, 'branch-color');
+
+  barkDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  patchWind(barkDepth, false, 'branch-depth');
+
+  leafMat = new THREE.MeshStandardMaterial({
+    map: T.leaf, alphaTest: 0.45,
+    side: THREE.DoubleSide, roughness: 0.85, metalness: 0
+  });
+  patchWind(leafMat, true, 'leaf-color');
+
+  // alpha-matched depth material → leaf shadows have the same cut-out shape
+  leafDepth = new THREE.MeshDepthMaterial({
+    depthPacking: THREE.RGBADepthPacking,
+    map: T.leaf, alphaTest: 0.45, side: THREE.DoubleSide
+  });
+  patchWind(leafDepth, true, 'leaf-depth');
+}
+
+function disposeMesh(m) {
+  if (!m) return;
+  scene.remove(m);
+  m.geometry.dispose();
+}
+
+// green ↔ yellow-green, or the autumn palette
+function leafColor(a, b, c, autumn, out) {
+  if (autumn) out.setHSL(0.01 + 0.12 * a, 0.62 + 0.30 * b, 0.40 + 0.20 * c);
+  else        out.setHSL(0.22 + 0.11 * a, 0.50 + 0.30 * b, 0.30 + 0.20 * c);
+}
+
+function applyLeafColors(mesh, seeds, autumn) {
+  const col = new THREE.Color();
+  for (let i = 0; i < mesh.count; i++) {
+    leafColor(seeds[i * 3], seeds[i * 3 + 1], seeds[i * 3 + 2], autumn, col);
+    mesh.setColorAt(i, col);                        // creates instanceColor once
+  }
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+}
+
+// Build the InstancedMesh of quad leaves, clustered around the outer tips.
+function buildLeafMesh(sites, count) {
+  if (!sites.length || count <= 0) return { mesh: null, seeds: null, reach: 0 };
+
+  const rng = mulberry32((P.seed ^ 0x9e3779b9) >>> 0);
+  const perSite = count / sites.length;
+  // blob size derives from how many leaves share one tip → even canopy density
+  const baseBlob = THREE.MathUtils.clamp(0.16 * Math.cbrt(perSite), 0.28, 1.5);
+
+  const geo = new THREE.PlaneGeometry(1, 1);
+  const phases = new Float32Array(count);
+  const seeds = new Float32Array(count * 3);
+  const siteR = new Float32Array(sites.length);
+  const mesh = new THREE.InstancedMesh(geo, leafMat, count);
+  const dummy = new THREE.Object3D();
+  let reach = 0;
+
+  for (let j = 0; j < sites.length; j++) {
+    siteR[j] = baseBlob * (0.7 + 0.6 * rng());
+    if (siteR[j] > reach) reach = siteR[j];
+  }
+  reach += 0.45;                                    // leaf size + wind margin
+
+  for (let i = 0; i < count; i++) {
+    const j = i % sites.length, s = sites[j], R = siteR[j];
+    const th = rng() * TAU;
+    const cz = 2 * rng() - 1;
+    const sz = Math.sqrt(Math.max(0, 1 - cz * cz));
+    const rr = Math.cbrt(rng()) * R;                // uniform point in the sphere
+    const push = R * 0.5 * rng();
+
+    dummy.position.set(
+      s.p.x + Math.cos(th) * sz * rr + s.d.x * push,
+      s.p.y + cz * rr * 0.75 + s.d.y * push,       // slightly flattened clusters
+      s.p.z + Math.sin(th) * sz * rr + s.d.z * push
+    );
+    dummy.rotation.set(rng() * TAU, rng() * TAU, rng() * TAU);
+    dummy.scale.setScalar(0.24 + rng() * 0.18);     // random leaf size
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+
+    phases[i] = rng() * TAU;                        // per-instance flutter phase
+    seeds[i * 3] = rng(); seeds[i * 3 + 1] = rng(); seeds[i * 3 + 2] = rng();
+  }
+
+  geo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1));
+  mesh.instanceMatrix.needsUpdate = true;
+  applyLeafColors(mesh, seeds, P.autumn);
+
+  mesh.computeBoundingSphere();                     // instances-aware bounds
+  if (mesh.boundingSphere) mesh.boundingSphere.radius += 0.6; // room for wind
+  return { mesh, seeds, reach };
+}
+
+// Position the sun + fit its orthographic shadow camera tightly to the tree.
+function updateSun() {
+  const el = P.sunEl * D2R, az = P.sunAz * D2R;
+  const size = treeBox.getSize(new THREE.Vector3());
+  const half = 0.5 * Math.hypot(size.x, size.z) + size.y * 0.3 + 0.8;
+  const dist = half * 5 + size.y;
+  const target = new THREE.Vector3(0, size.y * 0.45, 0);
+
+  sun.target.position.copy(target);
+  sun.position.set(
+    target.x + dist * Math.cos(el) * Math.sin(az),
+    target.y + dist * Math.sin(el),
+    target.z + dist * Math.cos(el) * Math.cos(az)
+  );
+
+  const c = sun.shadow.camera;
+  c.left = -half; c.right = half; c.top = half; c.bottom = -half;
+  c.near = Math.max(0.5, dist - half * 2 - size.y);
+  c.far = dist + half * 2 + size.y;
+  c.updateProjectionMatrix();
+}
+
+let rebuildTimer = 0;
+function scheduleRebuild() {                        // debounce slider drags
+  clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(rebuildTree, 90);
+}
+
+function rebuildTree() {
+  readParams();
+
+  const old = { branch: branchMesh, leaf: leafMesh, mats: [barkMat, barkDepth, leafMat, leafDepth] };
+
+  // New materials first: their cache keys match the old ones, so the already
+  // compiled programs are re-acquired BEFORE the old materials are disposed
+  // → no recompilation hiccup and no leaked programs.
+  createMaterials();
+
+  disposeMesh(old.branch);
+  disposeMesh(old.leaf);
+  for (const m of old.mats) if (m) m.dispose();     // textures are cached & shared
+
+  const { geometry, sites } = growTree(P);
+  if (!geometry) return;
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  geometry.boundingSphere.radius += 0.5;            // frustum-cull head-room for sway
+
+  branchMesh = new THREE.Mesh(geometry, barkMat);
+  branchMesh.castShadow = true;
+  branchMesh.receiveShadow = true;
+  branchMesh.customDepthMaterial = barkDepth;       // shadows that follow the wind
+  scene.add(branchMesh);
+
+  const built = buildLeafMesh(sites, P.leaves);
+  leafMesh = built.mesh; leafSeeds = built.seeds; leafReach = built.reach;
+  if (leafMesh) {
+    leafMesh.castShadow = true;
+    leafMesh.receiveShadow = true;
+    leafMesh.customDepthMaterial = leafDepth;
+    scene.add(leafMesh);
+  }
+
+  // world bounds (branch box grown by the leaf canopy), then derived state
+  treeBox.copy(geometry.boundingBox);
+  treeBox.max.y += leafReach;
+  treeBox.max.x += leafReach; treeBox.min.x -= leafReach;
+  treeBox.max.z += leafReach; treeBox.min.z -= leafReach;
+
+  const size = treeBox.getSize(new THREE.Vector3());
+  WIND.uTreeHeight.value = Math.max(0.5, treeBox.max.y);
+  WIND.uTreeRadius.value = Math.max(0.3,
+    Math.max(Math.abs(treeBox.min.x), treeBox.max.x, Math.abs(treeBox.min.z), treeBox.max.z));
+
+  scene.fog.near = Math.max(25, size.y * 5);
+  scene.fog.far = scene.fog.near * 3.5;
+
+  updateSun();
+  controls.target.set(0, treeBox.max.y * 0.45, 0);
+  refreshValues();
+}
+
+function applyShadowToggle() {
+  renderer.shadowMap.enabled = P.shadows;
+  const seen = new Set();
+  scene.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of [o.material, o.customDepthMaterial]) {
+      if (m && !seen.has(m)) { seen.add(m); m.needsUpdate = true; } // re-define USE_SHADOWMAP
+    }
+  });
+}
+
+/* ==========================================================================
+   SECTION 6 — UI (plain HTML inputs, no GUI library)
+   ========================================================================== */
+const LIVE = {                                       // id → action on `input`
+  wind:    () => { WIND.uStrength.value = P.wind; },
+  windDir: () => { WIND.uAngle.value = P.windDir * D2R; },
+  gust:    () => { WIND.uGustFreq.value = P.gust; },
+  sunEl:   () => updateSun(),
+  sunAz:   () => updateSun()
+};
+const TREE_PARAMS = ['seed', 'trunkH', 'trunkR', 'depth', 'angle', 'lenDecay', 'radDecay', 'droop', 'leaves'];
+
+function num(id) { return parseFloat($(id).value); }
+
+function readParams() {
+  const sv = parseInt($('seed').value, 10);
+  P.seed = Number.isFinite(sv) ? sv : 0;
+  P.trunkH = num('trunkH'); P.trunkR = num('trunkR');
+  P.depth = Math.round(num('depth'));
+  P.angle = num('angle'); P.lenDecay = num('lenDecay');
+  P.radDecay = num('radDecay'); P.droop = num('droop');
+  P.leaves = Math.round(num('leaves'));
+  P.wind = num('wind'); P.windDir = num('windDir'); P.gust = num('gust');
+  P.sunEl = num('sunEl'); P.sunAz = num('sunAz');
+  P.shadows = $('shadows').checked;
+  P.autumn = $('autumn').checked;
+}
+
+function refreshValues() {
+  document.querySelectorAll('#panel input[type=range]').forEach((inp) => {
+    const span = $('v-' + inp.id);
+    if (!span) return;
+    const step = parseFloat(inp.step) || 1;
+    const v = step >= 1 ? String(Math.round(parseFloat(inp.value))) : parseFloat(inp.value).toFixed(step < 0.05 ? 2 : 1);
+    span.textContent = v + (span.dataset.unit || '');
+  });
+}
+
+function wireUI() {
+  for (const id of TREE_PARAMS) {
+    $(id).addEventListener('input', () => { readParams(); refreshValues(); scheduleRebuild(); });
+  }
+  for (const id in LIVE) {
+    $(id).addEventListener('input', () => { readParams(); refreshValues(); LIVE[id](); });
+  }
+  $('regen').addEventListener('click', () => rebuildTree());
+  $('shadows').addEventListener('change', () => { readParams(); applyShadowToggle(); });
+  $('autumn').addEventListener('change', () => {
+    readParams();
+    if (leafMesh && leafSeeds) applyLeafColors(leafMesh, leafSeeds, P.autumn);
+  });
+
+  $('v-angle').dataset.unit = '°';
+  $('v-windDir').dataset.unit = '°';
+  $('v-sunEl').dataset.unit = '°';
+  $('v-sunAz').dataset.unit = '°';
+  refreshValues();
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* ==========================================================================
+   SECTION 7 — MAIN LOOP + FPS
+   ========================================================================== */
+const clock = new THREE.Clock();
+const fpsEl = $('fps');
+let frames = 0, fpsStamp = performance.now();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const now = performance.now();
+
+  WIND.uTime.value = clock.getElapsedTime();        // one clock for all wind
+  controls.update();
+  renderer.render(scene, camera);
+
+  frames++;
+  if (now - fpsStamp >= 500) {
+    fpsEl.textContent = Math.round((frames * 1000) / (now - fpsStamp)) + ' FPS';
+    frames = 0; fpsStamp = now;
+  }
+}
+
+/* boot ------------------------------------------------------------------- */
+createTextures();
+createGround();
+scene.background = T.sky;
+wireUI();
+rebuildTree();
+animate();
+</script>
+</body>
+</html>

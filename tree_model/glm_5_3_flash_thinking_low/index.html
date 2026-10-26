@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Procedural 3D Tree Generator</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #87b5d8; font-family: system-ui, sans-serif; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 12px; left: 12px; width: 280px; max-height: calc(100vh - 24px);
+    overflow-y: auto; background: rgba(20, 25, 20, 0.82); color: #e8f0e0;
+    padding: 14px 16px; border-radius: 10px; font-size: 13px; z-index: 10;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  #ui h2 { margin: 0 0 10px; font-size: 15px; letter-spacing: 0.5px; }
+  .row { margin-bottom: 8px; }
+  .row label { display: flex; justify-content: space-between; margin-bottom: 2px; opacity: 0.9; }
+  .row input[type=range] { width: 100%; accent-color: #7ec850; }
+  .row input[type=checkbox] { accent-color: #7ec850; }
+  .btns { display: flex; gap: 8px; margin-top: 10px; }
+  .btns button { flex: 1; padding: 7px; border: none; border-radius: 6px; cursor: pointer;
+    background: #4a8f3c; color: #fff; font-weight: 600; }
+  .btns button:hover { background: #5aa84a; }
+  #fps { position: fixed; bottom: 10px; right: 12px; color: #fff; font: 12px monospace;
+    background: rgba(0,0,0,0.45); padding: 4px 8px; border-radius: 6px; z-index: 10; }
+  #hint { position: fixed; bottom: 10px; left: 12px; color: rgba(255,255,255,0.85);
+    font-size: 12px; background: rgba(0,0,0,0.35); padding: 4px 8px; border-radius: 6px; z-index: 10; }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <h2>Procedural Tree</h2>
+  <div class="row"><label>Seed <span id="v-seed"></span></label><input type="range" id="seed" min="1" max="9999" step="1"></div>
+  <div class="row"><label>Trunk height <span id="v-height"></span></label><input type="range" id="height" min="4" max="14" step="0.5"></div>
+  <div class="row"><label>Trunk radius <span id="v-radius"></span></label><input type="range" id="radius" min="0.1" max="0.6" step="0.02"></div>
+  <div class="row"><label>Branching depth <span id="v-depth"></span></label><input type="range" id="depth" min="3" max="7" step="1"></div>
+  <div class="row"><label>Branch angle <span id="v-angle"></span></label><input type="range" id="angle" min="10" max="80" step="1"></div>
+  <div class="row"><label>Length decay <span id="v-len"></span></label><input type="range" id="len" min="0.5" max="0.85" step="0.01"></div>
+  <div class="row"><label>Radius decay <span id="v-rad"></span></label><input type="range" id="rad" min="0.5" max="0.85" step="0.01"></div>
+  <div class="row"><label>Gravity droop <span id="v-droop"></span></label><input type="range" id="droop" min="0" max="0.5" step="0.01"></div>
+  <div class="row"><label>Leaf count <span id="v-leaves"></span></label><input type="range" id="leaves" min="2000" max="20000" step="500"></div>
+  <div class="row"><label>Wind strength <span id="v-wind"></span></label><input type="range" id="wind" min="0" max="2" step="0.05"></div>
+  <div class="row"><label>Wind direction <span id="v-wdir"></span></label><input type="range" id="wdir" min="0" max="360" step="1"></div>
+  <div class="row"><label>Gust frequency <span id="v-gust"></span></label><input type="range" id="gust" min="0.1" max="3" step="0.05"></div>
+  <div class="row"><label>Sun elevation <span id="v-elev"></span></label><input type="range" id="elev" min="10" max="85" step="1"></div>
+  <div class="row"><label>Sun azimuth <span id="v-azim"></span></label><input type="range" id="azim" min="0" max="360" step="1"></div>
+  <div class="row"><label><input type="checkbox" id="shadows"> Shadows</label></div>
+  <div class="row"><label><input type="checkbox" id="autumn"> Autumn colors</label></div>
+  <div class="btns">
+    <button id="regen">Regenerate</button>
+    <button id="randSeed">Random seed</button>
+  </div>
+</div>
+
+<div id="fps">FPS: --</div>
+<div id="hint">drag: orbit &nbsp;|&nbsp; wheel: zoom &nbsp;|&nbsp; right-drag: pan</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* ============================================================
+   SECTION: SETUP
+   ============================================================ */
+
+const params = {
+  seed: 1234,
+  height: 8,
+  radius: 0.28,
+  depth: 5,
+  angle: 38,
+  lenDecay: 0.72,
+  radDecay: 0.68,
+  droop: 0.12,
+  leaves: 6000,
+  wind: 0.7,
+  windDir: 40,
+  gust: 0.8,
+  sunElev: 48,
+  sunAzim: 35,
+  shadows: true,
+  autumn: false,
+};
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87b5d8);
+scene.fog = new THREE.Fog(0x87b5d8, 60, 220);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 500);
+camera.position.set(18, 9, 24);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 7, 0);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.52;
+controls.minDistance = 5;
+controls.maxDistance = 120;
+
+const clock = new THREE.Clock();
+
+// Lights
+const sun = new THREE.DirectionalLight(0xfff2d8, 2.6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0006;
+sun.shadow.normalBias = 0.02;
+scene.add(sun);
+scene.add(sun.target);
+
+const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x4a5a30, 0.9);
+scene.add(hemi);
+
+// Sky gradient dome (canvas texture on inverted sphere)
+function makeSkyTexture() {
+  const c = document.createElement('canvas');
+  c.width = 16; c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0.0, '#2f6fb8');
+  grad.addColorStop(0.45, '#87b5d8');
+  grad.addColorStop(0.75, '#cfe3ee');
+  grad.addColorStop(1.0, '#e8eef0');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 16, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(400, 24, 16),
+  new THREE.MeshBasicMaterial({ map: makeSkyTexture(), side: THREE.BackSide, fog: false })
+);
+scene.add(sky);
+
+/* ============================================================
+   SECTION: TEXTURES (canvas 2D, no external files)
+   ============================================================ */
+
+// Bark texture: vertical streaks + noise
+function makeBarkTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#6b4f38';
+  g.fillRect(0, 0, 256, 256);
+  // vertical fissures
+  for (let i = 0; i < 220; i++) {
+    const x = Math.random() * 256;
+    const w = 1 + Math.random() * 3;
+    const dark = Math.random() > 0.5;
+    g.strokeStyle = dark ? 'rgba(40,26,16,0.5)' : 'rgba(150,120,90,0.35)';
+    g.lineWidth = w;
+    g.beginPath();
+    let y = 0, cx = x;
+    g.moveTo(cx, y);
+    while (y < 256) {
+      y += 8 + Math.random() * 14;
+      cx += (Math.random() - 0.5) * 6;
+      g.lineTo(cx, y);
+    }
+    g.stroke();
+  }
+  // speckle noise
+  const img = g.getImageData(0, 0, 256, 256);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const n = (Math.random() - 0.5) * 36;
+    d[i] = Math.max(0, Math.min(255, d[i] + n));
+    d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + n));
+    d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + n));
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// Bark "normal-like" variation: bump map derived from the same noise
+function makeBarkBump() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#808080';
+  g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 260; i++) {
+    const x = Math.random() * 256;
+    const dark = Math.random() > 0.5;
+    g.strokeStyle = dark ? 'rgba(40,40,40,0.6)' : 'rgba(200,200,200,0.45)';
+    g.lineWidth = 1 + Math.random() * 3;
+    g.beginPath();
+    let y = 0, cx = x;
+    g.moveTo(cx, y);
+    while (y < 256) { y += 8 + Math.random() * 14; cx += (Math.random() - 0.5) * 6; g.lineTo(cx, y); }
+    g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+// Leaf texture: simple leaf shape with alpha, drawn on canvas
+function makeLeafTexture() {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 128;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, 128, 128);
+  // leaf blade: two quadratic curves forming a pointed ellipse
+  g.fillStyle = '#ffffff'; // tinted by material color
+  g.beginPath();
+  g.moveTo(64, 6);
+  g.quadraticCurveTo(118, 44, 64, 122);
+  g.quadraticCurveTo(10, 44, 64, 6);
+  g.fill();
+  // central vein
+  g.strokeStyle = 'rgba(0,0,0,0.25)';
+  g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(64, 8);
+  g.lineTo(64, 120);
+  g.stroke();
+  // side veins
+  g.lineWidth = 1.5;
+  for (let i = 0; i < 6; i++) {
+    const y = 24 + i * 15;
+    g.beginPath();
+    g.moveTo(64, y);
+    g.lineTo(64 - 26 + i * 3, y + 14);
+    g.moveTo(64, y);
+    g.lineTo(64 + 26 - i * 3, y + 14);
+    g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// Grass ground texture
+function makeGroundTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#4d7a35';
+  g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 4000; i++) {
+    const x = Math.random() * 256, y = Math.random() * 256;
+    const shade = 40 + Math.random() * 60;
+    g.fillStyle = `rgba(${shade * 0.7}, ${shade + 40}, ${shade * 0.5}, 0.5)`;
+    g.fillRect(x, y, 2, 2 + Math.random() * 3);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(40, 40);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+const barkTex = makeBarkTexture();
+const barkBump = makeBarkBump();
+const leafTex = makeLeafTexture();
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(400, 400),
+  new THREE.MeshStandardMaterial({ map: makeGroundTexture(), roughness: 1 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* ============================================================
+   SECTION: WIND SHADER PATCH (onBeforeCompile)
+   ============================================================ */
+
+// Shared wind uniforms
+const windUniforms = {
+  uTime:        { value: 0 },
+  uWind:        { value: params.wind },
+  uWindDir:     { value: new THREE.Vector2(1, 0) },
+  uGustFreq:    { value: params.gust },
+};
+
+// GLSL chunk injected after #include <begin_vertex>.
+// For branches: `transformed` is in branch-local space; we pass the world-space
+// base position of each branch segment as a per-vertex attribute (aBase, xyz)
+// plus a per-vertex "flexibility" weight (aFlex) baked at build time.
+// For leaves: instanceMatrix is applied in the standard pipeline; we use the
+// instance world position (computed from instanceMatrix translation) as the
+// anchor, plus a per-instance phase attribute (aPhase).
+const WIND_COMMON = /* glsl */`
+uniform float uTime;
+uniform float uWind;
+uniform vec2  uWindDir;
+uniform float uGustFreq;
+
+// Smooth pseudo-gust: layered sines, cheap "noise"
+float gust(float t) {
+  float g = 0.6 * sin(t * uGustFreq) + 0.3 * sin(t * uGustFreq * 2.7 + 1.3) + 0.1 * sin(t * uGustFreq * 6.1 + 4.2);
+  return g * 0.5 + 0.5; // 0..1
+}
+`;
+
+// Branch wind: sway grows with height above base and distance from trunk axis
+const WIND_BRANCH = /* glsl */`
+attribute vec3 aBase;   // world-space base of this branch segment
+attribute float aFlex;  // 0 at trunk base, 1 at tips
+
+vec3 transformedWind() {
+  float h = max(position.y, 0.0);            // local height along segment
+  float sway = (h * 0.35 + aFlex * 2.2) * 0.06;
+  float g = gust(uTime);
+  float amp = uWind * sway * (0.55 + 0.45 * g);
+  float ph = aBase.x * 0.15 + aBase.z * 0.12;
+  float dx = sin(uTime * 1.3 + ph) * 0.7 + sin(uTime * 2.9 + ph * 1.7) * 0.3;
+  float dz = cos(uTime * 1.1 + ph * 1.3) * 0.7 + sin(uTime * 3.4 + ph) * 0.3;
+  vec3 off = vec3(uWindDir.x * dx, 0.0, uWindDir.y * dz) * amp;
+  // slight vertical bob at tips
+  off.y += sin(uTime * 2.2 + ph) * amp * 0.25;
+  return off;
+}
+`;
+
+// Leaf wind: high-frequency flutter + per-instance phase, anchored at instance origin
+const WIND_LEAF = /* glsl */`
+attribute float aPhase; // per-instance random phase
+
+vec3 transformedWind() {
+  // instance world position (translation column of instanceMatrix)
+  vec3 iPos = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
+  float g = gust(uTime);
+  float amp = uWind * (0.10 + 0.22 * g);
+  float t = uTime * 5.0 + aPhase * 6.2831;
+  float fx = sin(t) * 0.6 + sin(t * 2.3 + aPhase) * 0.4;
+  float fz = cos(t * 1.4 + aPhase * 2.0) * 0.6 + sin(t * 1.9) * 0.4;
+  vec3 off = vec3(uWindDir.x * fx, sin(t * 0.8) * 0.35, uWindDir.y * fz) * amp;
+  // gentle whole-canopy drift so leaves follow branch sway
+  float ph = iPos.x * 0.15 + iPos.z * 0.12;
+  float swayAmp = uWind * (0.15 + 0.35 * g) * 0.12 * max(iPos.y, 0.0) * 0.06;
+  off += vec3(uWindDir.x * sin(uTime * 1.3 + ph), 0.0, uWindDir.y * cos(uTime * 1.1 + ph * 1.3)) * swayAmp;
+  return off;
+}
+`;
+
+// Patch a material's vertex shader: inject wind displacement after begin_vertex.
+// isLeaf: leaves use instanceMatrix; branches use baked aBase/aFlex attributes.
+function patchWind(material, isLeaf) {
+  const header = WIND_COMMON + (isLeaf ? WIND_LEAF : WIND_BRANCH);
+  const body = isLeaf
+    ? 'transformed += transformedWind();'
+    : 'transformed += transformedWind();';
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, windUniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\n' + header)
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + body);
+  };
+  material.customProgramCacheKey = () => 'wind' + (isLeaf ? 'L' : 'B');
+  return material;
+}
+
+/* ============================================================
+   SECTION: TREE GENERATION
+   ============================================================ */
+
+// Seeded RNG (mulberry32)
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+let treeGroup = null;
+let branchMesh = null;
+let leavesMesh = null;
+let leafPhaseAttr = null;
+
+// Dispose old tree resources
+function disposeTree() {
+  if (!treeGroup) return;
+  treeGroup.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) {
+      if (o.material.map && o.material.map !== barkTex && o.material.map !== leafTex) o.material.map.dispose();
+      o.material.dispose();
+    }
+  });
+  scene.remove(treeGroup);
+  treeGroup = null;
+  branchMesh = null;
+  leavesMesh = null;
+}
+
+// Build the whole tree: merged tapered-cylinder branches + instanced leaves
+function buildTree() {
+  disposeTree();
+  treeGroup = new THREE.Group();
+  scene.add(treeGroup);
+
+  const rng = mulberry32(params.seed);
+  const maxDepth = params.depth;
+
+  // ---- Collect branch segments (as tapered cylinders) ----
+  // Each segment: start vec3, end vec3, startRadius, endRadius
+  const segments = [];
+  const tips = []; // terminal branch tips for leaf placement: {pos, dir}
+
+  function grow(pos, dir, len, rad, depth) {
+    const end = pos.clone().addScaledVector(dir, len);
+    segments.push({ a: pos.clone(), b: end.clone(), ra: rad, rb: rad * params.radDecay });
+    if (depth <= 0) {
+      tips.push({ pos: end.clone(), dir: dir.clone() });
+      return;
+    }
+    const nChildren = depth === maxDepth ? 3 : (rng() < 0.7 ? 3 : 2);
+    for (let i = 0; i < nChildren; i++) {
+      // random direction around current dir, biased by branch angle and droop
+      const axis = new THREE.Vector3(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize();
+      const q = new THREE.Quaternion().setFromAxisAngle(axis, THREE.MathUtils.degToRad(params.angle) * (0.6 + rng() * 0.6));
+      const nd = dir.clone().applyQuaternion(q).normalize();
+      // gravity droop: bend downward progressively
+      nd.y -= params.droop * (maxDepth - depth + 1) * 0.35;
+      nd.normalize();
+      grow(end, nd, len * params.lenDecay * (0.85 + rng() * 0.3), rad * params.radDecay, depth - 1);
+    }
+  }
+
+  grow(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0), params.height, params.radius, maxDepth);
+
+  // ---- Merge segments into one BufferGeometry of tapered cylinders ----
+  const RADIAL = 7;
+  const vertsPerSeg = (RADIAL + 1) * 2;
+  const idxPerSeg = RADIAL * 6;
+  const segCount = segments.length;
+  const vCount = segCount * vertsPerSeg;
+  const iCount = segCount * idxPerSeg;
+
+  const positions = new Float32Array(vCount * 3);
+  const normals = new Float32Array(vCount * 3);
+  const uvs = new Float32Array(vCount * 2);
+  const aBase = new Float32Array(vCount * 3);
+  const aFlex = new Float32Array(vCount);
+  const indices = new Uint32Array(iCount);
+
+  const treeHeight = params.height * (1 + (1 - Math.pow(params.lenDecay, maxDepth)) / (1 - params.lenDecay)) * 0.9;
+  const maxR = params.radius;
+
+  const ringA = new THREE.Vector3(), ringB = new THREE.Vector3();
+  const tangent = new THREE.Vector3(), side = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+
+  let vi = 0, ii = 0;
+  for (let s = 0; s < segCount; s++) {
+    const seg = segments[s];
+    const axis = seg.b.clone().sub(seg.a);
+    const segLen = axis.length();
+    axis.normalize();
+    // build orthonormal frame
+    side.crossVectors(axis, Math.abs(axis.y) > 0.95 ? new THREE.Vector3(1, 0, 0) : up).normalize();
+    tangent.crossVectors(side, axis).normalize();
+
+    const baseIdx = s * vertsPerSeg;
+    for (let r = 0; r <= RADIAL; r++) {
+      const th = (r / RADIAL) * Math.PI * 2;
+      const cosT = Math.cos(th), sinT = Math.sin(th);
+      const nx = side.x * cosT + tangent.x * sinT;
+      const ny = side.y * cosT + tangent.y * sinT;
+      const nz = side.z * cosT + tangent.z * sinT;
+      // two rings: bottom (ra) and top (rb)
+      for (let e = 0; e < 2; e++) {
+        const rad = e === 0 ? seg.ra : seg.rb;
+        const p = e === 0 ? seg.a : seg.b;
+        const k = baseIdx + r * 2 + e;
+        positions[k * 3] = p.x + nx * rad;
+        positions[k * 3 + 1] = p.y + ny * rad;
+        positions[k * 3 + 2] = p.z + nz * rad;
+        normals[k * 3] = nx; normals[k * 3 + 1] = ny; normals[k * 3 + 2] = nz;
+        uvs[k * 2] = (r / RADIAL) * 3;
+        uvs[k * 2 + 1] = e === 0 ? 0 : segLen * 0.5;
+        aBase[k * 3] = seg.a.x; aBase[k * 3 + 1] = seg.a.y; aBase[k * 3 + 2] = seg.a.z;
+        aFlex[k] = Math.min(1, seg.a.y / Math.max(treeHeight, 1)) * (seg.ra / maxR);
+      }
+    }
+    for (let r = 0; r < RADIAL; r++) {
+      const i0 = baseIdx + r * 2;
+      indices[ii++] = i0; indices[ii++] = i0 + 2; indices[ii++] = i0 + 1;
+      indices[ii++] = i0 + 1; indices[ii++] = i0 + 2; indices[ii++] = i0 + 3;
+    }
+  }
+
+  const branchGeo = new THREE.BufferGeometry();
+  branchGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  branchGeo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  branchGeo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  branchGeo.setAttribute('aBase', new THREE.BufferAttribute(aBase, 3));
+  branchGeo.setAttribute('aFlex', new THREE.BufferAttribute(aFlex, 1));
+  branchGeo.setIndex(new THREE.BufferAttribute(indices, 1));
+
+  const branchMat = patchWind(new THREE.MeshStandardMaterial({
+    map: barkTex,
+    bumpMap: barkBump,
+    bumpScale: 0.6,
+    color: 0xffffff,
+    roughness: 0.95,
+  }), false);
+
+  branchMesh = new THREE.Mesh(branchGeo, branchMat);
+  branchMesh.castShadow = true;
+  branchMesh.receiveShadow = true;
+  treeGroup.add(branchMesh);
+
+  // ---- Leaves: InstancedMesh of quads on terminal branches ----
+  const leafGeo = new THREE.PlaneGeometry(1, 1);
+  leafGeo.translate(0, 0.5, 0); // pivot at leaf base
+
+  const leafMat = patchWind(new THREE.MeshStandardMaterial({
+    map: leafTex,
+    alphaTest: 0.4,
+    side: THREE.DoubleSide,
+    roughness: 0.8,
+    color: 0x5da03f,
+  }), true);
+
+  const count = params.leaves;
+  leavesMesh = new THREE.InstancedMesh(leafGeo, leafMat, count);
+  leavesMesh.castShadow = true;
+  leavesMesh.receiveShadow = false;
+
+  const phases = new Float32Array(count);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const scl = new THREE.Vector3();
+  const posV = new THREE.Vector3();
+  const autumn = params.autumn;
+  const color = new THREE.Color();
+
+  // Distribute leaves among tips, clustered near tip ends
+  for (let i = 0; i < count; i++) {
+    const tip = tips[Math.floor(rng() * tips.length)];
+    // position: along last bit of the branch + random offset
+    const t = 0.4 + rng() * 0.6;
+    posV.copy(tip.pos).addScaledVector(tip.dir, -tip.dir.length() * 0.5 * (1 - t));
+    posV.x += (rng() - 0.5) * 0.9;
+    posV.y += (rng() - 0.2) * 0.7;
+    posV.z += (rng() - 0.5) * 0.9;
+
+    q.setFromEuler(new THREE.Euler(rng() * Math.PI * 2, rng() * Math.PI * 2, rng() * Math.PI * 2));
+    const size = 0.35 + rng() * 0.45;
+    scl.set(size, size * (0.8 + rng() * 0.4), 1);
+    m.compose(posV, q, scl);
+    leavesMesh.setMatrixAt(i, m);
+    phases[i] = rng();
+
+    // color variation: green -> yellow-green (or autumn palette)
+    if (autumn) {
+      const r = rng();
+      if (r < 0.4) color.setHSL(0.08 + rng() * 0.05, 0.85, 0.45);      // orange
+      else if (r < 0.75) color.setHSL(0.11 + rng() * 0.04, 0.8, 0.5);  // yellow
+      else color.setHSL(0.02 + rng() * 0.03, 0.75, 0.35);              // red-brown
+    } else {
+      color.setHSL(0.26 + rng() * 0.09, 0.55 + rng() * 0.25, 0.32 + rng() * 0.18);
+    }
+    leavesMesh.setColorAt(i, color);
+  }
+  leavesMesh.instanceMatrix.needsUpdate = true;
+  if (leavesMesh.instanceColor) leavesMesh.instanceColor.needsUpdate = true;
+
+  // per-instance phase attribute (InstancedBufferAttribute)
+  leafPhaseAttr = new THREE.InstancedBufferAttribute(phases, 1);
+  leafGeo.setAttribute('aPhase', leafPhaseAttr);
+
+  treeGroup.add(leavesMesh);
+
+  // ---- Fit shadow camera to the tree ----
+  const box = new THREE.Box3().setFromObject(treeGroup);
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  const cam = sun.shadow.camera;
+  const pad = 2;
+  cam.left = -sphere.radius - pad;
+  cam.right = sphere.radius + pad;
+  cam.top = sphere.radius + pad;
+  cam.bottom = -sphere.radius - pad;
+  cam.near = 0.5;
+  cam.far = sphere.radius * 4 + 40;
+  cam.updateProjectionMatrix();
+}
+
+/* ============================================================
+   SECTION: UI
+   ============================================================ */
+
+const $ = (id) => document.getElementById(id);
+const sliders = [
+  ['seed', 'seed', 1], ['height', 'height', 1], ['radius', 'radius', 1],
+  ['depth', 'depth', 1], ['angle', 'angle', 1], ['len', 'lenDecay', 1],
+  ['rad', 'radDecay', 1], ['droop', 'droop', 1], ['leaves', 'leaves', 1],
+  ['wind', 'wind', 1], ['wdir', 'windDir', 1], ['gust', 'gust', 1],
+  ['elev', 'sunElev', 1], ['azim', 'sunAzim', 1],
+];
+
+function syncUI() {
+  for (const [id, key] of sliders) {
+    $(id).value = params[key];
+    $('v-' + id).textContent = params[key];
+  }
+  $('shadows').checked = params.shadows;
+  $('autumn').checked = params.autumn;
+}
+
+// Structural params -> rebuild tree; wind/light params -> live update
+const structural = new Set(['seed', 'height', 'radius', 'depth', 'angle', 'len', 'rad', 'droop', 'leaves', 'autumn']);
+
+for (const [id, key] of sliders) {
+  $(id).addEventListener('input', (e) => {
+    params[key] = parseFloat(e.target.value);
+    $('v-' + id).textContent = params[key];
+    if (structural.has(id)) buildTree();
+  });
+}
+
+$('shadows').addEventListener('change', (e) => {
+  params.shadows = e.target.checked;
+  sun.castShadow = params.shadows;
+  renderer.shadowMap.enabled = params.shadows;
+  // force material recompile so shadow map state is respected
+  scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
+});
+$('autumn').addEventListener('change', () => { params.autumn = $('autumn').checked; buildTree(); });
+$('regen').addEventListener('click', buildTree);
+$('randSeed').addEventListener('click', () => {
+  params.seed = Math.floor(Math.random() * 9999) + 1;
+  syncUI();
+  buildTree();
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ============================================================
+   SECTION: LOOP
+   ============================================================ */
+
+function updateSun() {
+  const el = THREE.MathUtils.degToRad(params.sunElev);
+  const az = THREE.MathUtils.degToRad(params.sunAzim);
+  const r = 60;
+  sun.position.set(
+    Math.cos(el) * Math.sin(az) * r,
+    Math.sin(el) * r,
+    Math.cos(el) * Math.cos(az) * r
+  );
+  sun.target.position.set(0, 6, 0);
+}
+
+function updateWind() {
+  const a = THREE.MathUtils.degToRad(params.windDir);
+  windUniforms.uWindDir.value.set(Math.sin(a), Math.cos(a));
+  windUniforms.uWind.value = params.wind;
+  windUniforms.uGustFreq.value = params.gust;
+}
+
+let frames = 0, fpsTime = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  windUniforms.uTime.value += dt;
+
+  controls.update();
+  renderer.render(scene, camera);
+
+  // FPS counter
+  frames++;
+  fpsTime += dt;
+  if (fpsTime >= 0.5) {
+    $('fps').textContent = 'FPS: ' + Math.round(frames / fpsTime);
+    frames = 0;
+    fpsTime = 0;
+  }
+}
+
+// Boot
+syncUI();
+updateSun();
+updateWind();
+buildTree();
+animate();
+</script>
+</body>
+</html>

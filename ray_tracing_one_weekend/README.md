@@ -1,8 +1,4 @@
-# Ray Tracing in One Weekend
-
-<a href="https://raytracing.github.io/books/RayTracingInOneWeekend.html">
-    <cite>Ray Tracing in One Weekend</cite>
-</a>
+# [Ray Tracing in One Weekend](https://raytracing.github.io/books/RayTracingInOneWeekend.html)
 
 ```text
 You are an autonomous coding agent working inside the Zed editor with file and terminal tools. Build the whole app yourself without asking me any questions. Make reasonable decisions and finish.

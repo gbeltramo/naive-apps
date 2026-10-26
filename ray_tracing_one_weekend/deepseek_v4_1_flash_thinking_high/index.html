@@ -1,0 +1,1537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ray Tracing in One Weekend — Pure JavaScript</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: #121620;
+    --panel-2: #171c28;
+    --border: #252c3b;
+    --text: #e6e9f0;
+    --muted: #8b94a7;
+    --accent: #6ea8fe;
+    --accent-2: #8b5cf6;
+    --good: #34d399;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { margin: 0; min-height: 100%; }
+
+  body {
+    background: radial-gradient(1200px 800px at 20% -10%, #1a2236 0%, var(--bg) 55%) fixed;
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .app {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+
+  h1 {
+    font-size: 20px;
+    letter-spacing: -0.02em;
+    margin: 0;
+    font-weight: 650;
+  }
+
+  header p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: 310px minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+  }
+
+  @media (max-width: 920px) {
+    main { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+  }
+
+  .panel h2 {
+    margin: 0 0 14px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-weight: 650;
+  }
+
+  .field {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+
+  .field label {
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-weight: 600;
+  }
+
+  select, input[type="number"] {
+    width: 100%;
+    background: #0e121b;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font: inherit;
+    outline: none;
+  }
+
+  select:focus, input[type="number"]:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(110, 168, 254, 0.15);
+  }
+
+  .buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  button {
+    border: 1px solid var(--border);
+    background: #1a2130;
+    color: var(--text);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+  }
+
+  button:hover:not(:disabled) {
+    border-color: #3a465e;
+    background: #202a3d;
+  }
+
+  button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  button.primary {
+    background: linear-gradient(180deg, #3b82f6, #2563eb);
+    border-color: #2563eb;
+  }
+
+  button.primary:hover:not(:disabled) {
+    background: linear-gradient(180deg, #4f8ff7, #2f6fe0);
+  }
+
+  button.danger {
+    background: #2a1720;
+    border-color: #4a2433;
+    color: #ffb4c6;
+  }
+
+  button.danger:hover:not(:disabled) {
+    background: #351b27;
+    border-color: #6b3045;
+  }
+
+  .download {
+    width: 100%;
+    margin-top: 8px;
+  }
+
+  .hint {
+    color: var(--muted);
+    font-size: 12px;
+    margin: 12px 0 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .viewport {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .canvas-wrap {
+    background: #05070b;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 10px;
+    display: flex;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    background: #05070b;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  @media (max-width: 640px) {
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  .stat {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    min-width: 0;
+  }
+
+  .stat .k {
+    color: var(--muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-weight: 600;
+  }
+
+  .stat .v {
+    font-variant-numeric: tabular-nums;
+    font-size: 16px;
+    font-weight: 650;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .progress-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .progress-track {
+    flex: 1;
+    height: 8px;
+    background: #0e121b;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  #progressBar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width 0.15s linear;
+  }
+
+  #progressText {
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    min-width: 44px;
+    text-align: right;
+  }
+
+  .status {
+    color: var(--muted);
+    font-size: 12px;
+    min-height: 18px;
+  }
+
+  .status strong { color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Ray Tracing in One Weekend</h1>
+    <p>Pure JavaScript · no libraries · Web Workers · deterministic</p>
+  </header>
+
+  <main>
+    <aside class="panel">
+      <h2>Render settings</h2>
+
+      <div class="field">
+        <label for="preset">Preset</label>
+        <select id="preset">
+          <option value="quick">Quick preview — 200px, 10 spp</option>
+          <option value="balanced" selected>Balanced — 400px, 50 spp</option>
+          <option value="final">Final quality — 800px, 200 spp</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="scene">Scene</label>
+        <select id="scene">
+          <option value="normals">Ch.6 normals sphere</option>
+          <option value="diffuse">Ch.9 diffuse</option>
+          <option value="trio">Ch.11 metal/glass trio</option>
+          <option value="final" selected>Final scene</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="width">Image width</label>
+        <select id="width">
+          <option value="200">200 px</option>
+          <option value="400" selected>400 px</option>
+          <option value="600">600 px</option>
+          <option value="800">800 px</option>
+          <option value="1200">1200 px</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="spp">Samples per pixel</label>
+        <select id="spp">
+          <option value="10">10</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+          <option value="200">200</option>
+          <option value="500">500</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="depth">Max depth</label>
+        <input id="depth" type="number" min="1" max="200" step="1" value="50">
+      </div>
+
+      <div class="buttons">
+        <button id="renderBtn" class="primary">Render</button>
+        <button id="stopBtn" class="danger" disabled>Stop</button>
+      </div>
+
+      <button id="downloadBtn" class="download" disabled>Download PNG</button>
+
+      <p class="hint">
+        The page auto-renders a 200×112 @ 10 spp preview on load. Press
+        <strong>Render</strong> to use the settings above. Rendering runs in
+        parallel Web Workers, so the UI stays responsive.
+      </p>
+    </aside>
+
+    <section class="viewport">
+      <div class="canvas-wrap">
+        <canvas id="canvas" width="400" height="225"></canvas>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="k">Resolution</div><div class="v" id="resolutionText">—</div></div>
+        <div class="stat"><div class="k">Samples / pixel</div><div class="v" id="sppText">—</div></div>
+        <div class="stat"><div class="k">Max depth</div><div class="v" id="depthText">—</div></div>
+        <div class="stat"><div class="k">Elapsed</div><div class="v" id="elapsedText">0.0s</div></div>
+        <div class="stat"><div class="k">Rays / second</div><div class="v" id="raysText">—</div></div>
+        <div class="stat"><div class="k">Progress</div><div class="v" id="progressText">0%</div></div>
+        <div class="stat"><div class="k">Workers</div><div class="v" id="workersText">—</div></div>
+        <div class="stat"><div class="k">Status</div><div class="v" id="statusText">Idle</div></div>
+      </div>
+
+      <div class="progress-row">
+        <div class="progress-track"><div id="progressBar"></div></div>
+        <div id="progressText2" class="status">0%</div>
+      </div>
+
+      <div class="status" id="statusLine">Ready.</div>
+    </section>
+  </main>
+</div>
+
+<script>
+/* ============================================================================
+   MAIN THREAD
+   ----------------------------------------------------------------------------
+   The entire ray tracer lives inside `workerMain` below. That function is
+   stringified and executed inside a Blob-URL Web Worker, so it must not
+   reference anything from this outer scope. The main thread only manages the
+   UI, the canvas, and worker messages.
+   ========================================================================== */
+
+function workerMain() {
+  'use strict';
+
+  /* ==========================================================================
+     Chapter 2 — Vectors
+     Vec3 is used for points, directions, and colors. Point3 and Color are
+     aliases, exactly as in the book.
+     ========================================================================== */
+
+  class Vec3 {
+    constructor(x = 0, y = 0, z = 0) {
+      this.x = x;
+      this.y = y;
+      this.z = z;
+    }
+
+    static random(min = 0, max = 1, rng = Math.random) {
+      return new Vec3(
+        min + (max - min) * rng(),
+        min + (max - min) * rng(),
+        min + (max - min) * rng()
+      );
+    }
+
+    // Rejection sampling inside the unit sphere, then normalize.
+    static randomUnitVector(rng) {
+      while (true) {
+        const p = Vec3.random(-1, 1, rng);
+        const lenSq = p.lengthSquared();
+        if (lenSq > 1e-12 && lenSq <= 1) return p.div(Math.sqrt(lenSq));
+      }
+    }
+
+    // Rejection sampling inside the unit disk in the xy plane.
+    static randomInUnitDisk(rng) {
+      while (true) {
+        const p = new Vec3(-1 + 2 * rng(), -1 + 2 * rng(), 0);
+        if (p.lengthSquared() < 1) return p;
+      }
+    }
+
+    add(v) { return new Vec3(this.x + v.x, this.y + v.y, this.z + v.z); }
+    sub(v) { return new Vec3(this.x - v.x, this.y - v.y, this.z - v.z); }
+    mul(t) { return new Vec3(this.x * t, this.y * t, this.z * t); }
+    div(t) { return new Vec3(this.x / t, this.y / t, this.z / t); }
+    neg() { return new Vec3(-this.x, -this.y, -this.z); }
+
+    dot(v) { return this.x * v.x + this.y * v.y + this.z * v.z; }
+
+    cross(v) {
+      return new Vec3(
+        this.y * v.z - this.z * v.y,
+        this.z * v.x - this.x * v.z,
+        this.x * v.y - this.y * v.x
+      );
+    }
+
+    lengthSquared() { return this.x * this.x + this.y * this.y + this.z * this.z; }
+    length() { return Math.sqrt(this.lengthSquared()); }
+    unit() { return this.div(this.length()); }
+
+    nearZero() {
+      const s = 1e-8;
+      return Math.abs(this.x) < s && Math.abs(this.y) < s && Math.abs(this.z) < s;
+    }
+
+    // Reflect this vector about normal n.
+    reflect(n) { return this.sub(n.mul(2 * this.dot(n))); }
+
+    // Refract this vector through a surface with normal n.
+    refract(n, etaiOverEtat) {
+      const cosTheta = Math.min(this.neg().dot(n), 1.0);
+      const rOutPerp = this.add(n.mul(cosTheta)).mul(etaiOverEtat);
+      const rOutParallel = n.mul(-Math.sqrt(Math.abs(1.0 - rOutPerp.lengthSquared())));
+      return rOutPerp.add(rOutParallel);
+    }
+
+    // Component-wise multiply, used for color attenuation.
+    mulv(v) { return new Vec3(this.x * v.x, this.y * v.y, this.z * v.z); }
+  }
+
+  const Point3 = Vec3;
+  const Color = Vec3;
+
+  /* ==========================================================================
+     Chapter 3 — Rays
+     ========================================================================== */
+
+  class Ray {
+    constructor(origin, direction) {
+      this.origin = origin;
+      this.direction = direction;
+    }
+    at(t) { return this.origin.add(this.direction.mul(t)); }
+  }
+
+  /* ==========================================================================
+     Chapter 3 / 6 — Interval and HitRecord
+     The book uses Interval for the ray parameter range. We keep the class for
+     clarity, but the hot intersection path passes plain numbers to avoid
+     allocating an Interval for every sphere test.
+     ========================================================================== */
+
+  class Interval {
+    constructor(min = Infinity, max = -Infinity) {
+      this.min = min;
+      this.max = max;
+    }
+    size() { return this.max - this.min; }
+    contains(x) { return this.min <= x && x <= this.max; }
+    surrounds(x) { return this.min < x && x < this.max; }
+    clamp(x) { return x < this.min ? this.min : (x > this.max ? this.max : x); }
+  }
+
+  class HitRecord {
+    constructor() {
+      this.p = null;
+      this.normal = null;
+      this.t = 0;
+      this.frontFace = false;
+      this.material = null;
+    }
+
+    setFaceNormal(ray, outwardNormal) {
+      this.frontFace = ray.direction.dot(outwardNormal) < 0;
+      this.normal = this.frontFace ? outwardNormal : outwardNormal.neg();
+    }
+  }
+
+  /* ==========================================================================
+     Chapter 4 / 5 — Sphere
+     Uses the half-b quadratic optimization from the book.
+     ========================================================================== */
+
+  class Sphere {
+    constructor(center, radius, material) {
+      this.center = center;
+      this.radius = Math.max(0, radius);
+      this.material = material;
+    }
+
+    hit(ray, tmin, tmax, rec) {
+      const ox = ray.origin.x - this.center.x;
+      const oy = ray.origin.y - this.center.y;
+      const oz = ray.origin.z - this.center.z;
+
+      const dx = ray.direction.x;
+      const dy = ray.direction.y;
+      const dz = ray.direction.z;
+
+      const a = dx * dx + dy * dy + dz * dz;
+      const halfB = ox * dx + oy * dy + oz * dz;
+      const c = ox * ox + oy * oy + oz * oz - this.radius * this.radius;
+
+      const discriminant = halfB * halfB - a * c;
+      if (discriminant < 0) return false;
+
+      const sqrtD = Math.sqrt(discriminant);
+
+      // Find the nearest root that lies in the acceptable range.
+      let root = (-halfB - sqrtD) / a;
+      if (root < tmin || root > tmax) {
+        root = (-halfB + sqrtD) / a;
+        if (root < tmin || root > tmax) return false;
+      }
+
+      rec.t = root;
+      rec.p = new Point3(
+        ray.origin.x + root * dx,
+        ray.origin.y + root * dy,
+        ray.origin.z + root * dz
+      );
+
+      const outwardNormal = new Vec3(
+        (rec.p.x - this.center.x) / this.radius,
+        (rec.p.y - this.center.y) / this.radius,
+        (rec.p.z - this.center.z) / this.radius
+      );
+      rec.setFaceNormal(ray, outwardNormal);
+      rec.material = this.material;
+      return true;
+    }
+  }
+
+  /* ==========================================================================
+     Chapter 6 — HittableList
+     ========================================================================== */
+
+  class HittableList {
+    constructor(objects = []) {
+      this.objects = objects;
+      this.bvh = null;
+    }
+
+    add(object) {
+      this.objects.push(object);
+      this.bvh = null;
+    }
+
+    // Acceleration structure for the 480+ sphere final scene. This is not in
+    // the first book, but a naive linear scan is far too slow in JavaScript.
+    buildBVH() {
+      this.bvh = new BVH(this.objects);
+    }
+
+    hit(ray, tmin, tmax, rec) {
+      if (this.bvh) return this.bvh.hit(ray, tmin, tmax, rec);
+
+      let hitAnything = false;
+      let closest = tmax;
+      for (let i = 0; i < this.objects.length; i++) {
+        if (this.objects[i].hit(ray, tmin, closest, rec)) {
+          hitAnything = true;
+          closest = rec.t;
+        }
+      }
+      return hitAnything;
+    }
+  }
+
+  /* ==========================================================================
+     Bounding volume hierarchy (performance addition)
+     A simple median-split BVH over sphere AABBs. The traversal stack is
+     module-level and reused: BVH.hit is never re-entered while it is running,
+     because rayColor finishes world.hit before recursing.
+     ========================================================================== */
+
+  const bvhStack = new Int32Array(128);
+
+  function aabbHit(node, ox, oy, oz, invDx, invDy, invDz, tmin, tmax) {
+    let t0 = (node.minX - ox) * invDx;
+    let t1 = (node.maxX - ox) * invDx;
+    if (t0 > t1) { const tmp = t0; t0 = t1; t1 = tmp; }
+    if (t0 > tmin) tmin = t0;
+    if (t1 < tmax) tmax = t1;
+    if (tmax <= tmin) return false;
+
+    t0 = (node.minY - oy) * invDy;
+    t1 = (node.maxY - oy) * invDy;
+    if (t0 > t1) { const tmp = t0; t0 = t1; t1 = tmp; }
+    if (t0 > tmin) tmin = t0;
+    if (t1 < tmax) tmax = t1;
+    if (tmax <= tmin) return false;
+
+    t0 = (node.minZ - oz) * invDz;
+    t1 = (node.maxZ - oz) * invDz;
+    if (t0 > t1) { const tmp = t0; t0 = t1; t1 = tmp; }
+    if (t0 > tmin) tmin = t0;
+    if (t1 < tmax) tmax = t1;
+
+    return tmax > tmin;
+  }
+
+  class BVH {
+    constructor(objects) {
+      this.objects = objects.slice();
+      this.nodes = [];
+      this.root = this.build(0, this.objects.length);
+    }
+
+    build(start, end) {
+      const node = {
+        minX: Infinity, minY: Infinity, minZ: Infinity,
+        maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity,
+        start,
+        count: end - start,
+        left: -1,
+        right: -1
+      };
+      const index = this.nodes.length;
+      this.nodes.push(node);
+
+      // Bounds of every sphere in this range.
+      for (let i = start; i < end; i++) {
+        const s = this.objects[i];
+        const r = s.radius;
+        if (s.center.x - r < node.minX) node.minX = s.center.x - r;
+        if (s.center.y - r < node.minY) node.minY = s.center.y - r;
+        if (s.center.z - r < node.minZ) node.minZ = s.center.z - r;
+        if (s.center.x + r > node.maxX) node.maxX = s.center.x + r;
+        if (s.center.y + r > node.maxY) node.maxY = s.center.y + r;
+        if (s.center.z + r > node.maxZ) node.maxZ = s.center.z + r;
+      }
+
+      if (end - start <= 4) return index;
+
+      // Split at the median along the widest centroid axis.
+      let cminX = Infinity, cminY = Infinity, cminZ = Infinity;
+      let cmaxX = -Infinity, cmaxY = -Infinity, cmaxZ = -Infinity;
+      for (let i = start; i < end; i++) {
+        const c = this.objects[i].center;
+        if (c.x < cminX) cminX = c.x;
+        if (c.y < cminY) cminY = c.y;
+        if (c.z < cminZ) cminZ = c.z;
+        if (c.x > cmaxX) cmaxX = c.x;
+        if (c.y > cmaxY) cmaxY = c.y;
+        if (c.z > cmaxZ) cmaxZ = c.z;
+      }
+
+      const ex = cmaxX - cminX;
+      const ey = cmaxY - cminY;
+      const ez = cmaxZ - cminZ;
+
+      let axis = 0;
+      if (ey > ex && ey >= ez) axis = 1;
+      else if (ez > ex && ez > ey) axis = 2;
+
+      const slice = this.objects.slice(start, end);
+      slice.sort((a, b) => {
+        if (axis === 0) return a.center.x - b.center.x;
+        if (axis === 1) return a.center.y - b.center.y;
+        return a.center.z - b.center.z;
+      });
+      for (let i = 0; i < slice.length; i++) this.objects[start + i] = slice[i];
+
+      const mid = start + ((end - start) >> 1);
+      node.left = this.build(start, mid);
+      node.right = this.build(mid, end);
+      return index;
+    }
+
+    hit(ray, tmin, tmax, rec) {
+      const ox = ray.origin.x;
+      const oy = ray.origin.y;
+      const oz = ray.origin.z;
+
+      const dx = ray.direction.x;
+      const dy = ray.direction.y;
+      const dz = ray.direction.z;
+
+      // Avoid 0 * Infinity = NaN in the slab test.
+      const invDx = dx === 0 ? 1e30 : 1 / dx;
+      const invDy = dy === 0 ? 1e30 : 1 / dy;
+      const invDz = dz === 0 ? 1e30 : 1 / dz;
+
+      let closest = tmax;
+      let hitAnything = false;
+      let sp = 0;
+      bvhStack[sp++] = this.root;
+
+      while (sp > 0) {
+        const node = this.nodes[bvhStack[--sp]];
+        if (!aabbHit(node, ox, oy, oz, invDx, invDy, invDz, tmin, closest)) continue;
+
+        if (node.left < 0) {
+          const end = node.start + node.count;
+          for (let i = node.start; i < end; i++) {
+            if (this.objects[i].hit(ray, tmin, closest, rec)) {
+              hitAnything = true;
+              closest = rec.t;
+            }
+          }
+        } else {
+          bvhStack[sp++] = node.left;
+          bvhStack[sp++] = node.right;
+        }
+      }
+
+      return hitAnything;
+    }
+  }
+
+  /* ==========================================================================
+     Chapters 9–11 — Materials
+     ========================================================================== */
+
+  class Material {
+    scatter(rayIn, rec, rng) { return null; }
+  }
+
+  // Chapter 9: Lambertian diffuse.
+  class Lambertian extends Material {
+    constructor(albedo) {
+      super();
+      this.albedo = albedo;
+    }
+
+    scatter(rayIn, rec, rng) {
+      let scatterDirection = rec.normal.add(Vec3.randomUnitVector(rng));
+
+      // Catch degenerate scatter direction.
+      if (scatterDirection.nearZero()) scatterDirection = rec.normal;
+
+      return {
+        attenuation: this.albedo,
+        scattered: new Ray(rec.p, scatterDirection)
+      };
+    }
+  }
+
+  // Chapter 10: Metal with fuzz.
+  class Metal extends Material {
+    constructor(albedo, fuzz) {
+      super();
+      this.albedo = albedo;
+      this.fuzz = Math.max(0, Math.min(1, fuzz));
+    }
+
+    scatter(rayIn, rec, rng) {
+      const reflected = rayIn.direction.unit().reflect(rec.normal);
+      const scattered = new Ray(
+        rec.p,
+        reflected.add(Vec3.randomUnitVector(rng).mul(this.fuzz))
+      );
+
+      // Absorb rays that scatter below the surface.
+      if (scattered.direction.dot(rec.normal) <= 0) return null;
+
+      return { attenuation: this.albedo, scattered };
+    }
+  }
+
+  // Chapter 11: Dielectric (glass) with Schlick reflectance.
+  class Dielectric extends Material {
+    constructor(refractionIndex) {
+      super();
+      this.refractionIndex = refractionIndex;
+    }
+
+    scatter(rayIn, rec, rng) {
+      const ri = rec.frontFace ? (1.0 / this.refractionIndex) : this.refractionIndex;
+      const unitDirection = rayIn.direction.unit();
+
+      const cosTheta = Math.min(unitDirection.neg().dot(rec.normal), 1.0);
+      const sinTheta = Math.sqrt(1.0 - cosTheta * cosTheta);
+      const cannotRefract = ri * sinTheta > 1.0;
+
+      let direction;
+      if (cannotRefract || schlick(cosTheta, ri) > rng()) {
+        direction = unitDirection.reflect(rec.normal);
+      } else {
+        direction = unitDirection.refract(rec.normal, ri);
+      }
+
+      return {
+        attenuation: new Color(1.0, 1.0, 1.0),
+        scattered: new Ray(rec.p, direction)
+      };
+    }
+  }
+
+  // Chapter 5: a material that displays the surface normal as a color.
+  class NormalMaterial extends Material {
+    constructor() {
+      super();
+      this.kind = 'normal';
+    }
+  }
+
+  function schlick(cosine, refractionIndex) {
+    let r0 = (1 - refractionIndex) / (1 + refractionIndex);
+    r0 = r0 * r0;
+    return r0 + (1 - r0) * Math.pow(1 - cosine, 5);
+  }
+
+  /* ==========================================================================
+     Chapters 7, 8, 12, 13 — Camera
+     Positionable camera, antialiasing, and defocus blur.
+     ========================================================================== */
+
+  function degreesToRadians(degrees) {
+    return degrees * Math.PI / 180.0;
+  }
+
+  class Camera {
+    constructor(
+      imageWidth,
+      aspectRatio,
+      vfov,
+      lookfrom,
+      lookat,
+      vup,
+      defocusAngle,
+      focusDistance,
+      samplesPerPixel,
+      maxDepth
+    ) {
+      this.imageWidth = imageWidth;
+      this.aspectRatio = aspectRatio;
+      this.vfov = vfov;
+      this.lookfrom = lookfrom;
+      this.lookat = lookat;
+      this.vup = vup;
+      this.defocusAngle = defocusAngle;
+      this.focusDistance = focusDistance;
+      this.samplesPerPixel = samplesPerPixel;
+      this.maxDepth = maxDepth;
+      this.initialize();
+    }
+
+    initialize() {
+      this.imageHeight = Math.max(1, Math.floor(this.imageWidth / this.aspectRatio));
+      this.center = this.lookfrom;
+
+      const theta = degreesToRadians(this.vfov);
+      const h = Math.tan(theta / 2.0);
+      const viewportHeight = 2.0 * h * this.focusDistance;
+      const viewportWidth = viewportHeight * (this.imageWidth / this.imageHeight);
+
+      const w = this.lookfrom.sub(this.lookat).unit();
+      const u = this.vup.cross(w).unit();
+      const v = w.cross(u);
+
+      this.viewportU = u.mul(viewportWidth);
+      this.viewportV = v.mul(-viewportHeight);
+
+      this.pixelDeltaU = this.viewportU.div(this.imageWidth);
+      this.pixelDeltaV = this.viewportV.div(this.imageHeight);
+
+      const viewportUpperLeft = this.center
+        .sub(w.mul(this.focusDistance))
+        .sub(this.viewportU.div(2.0))
+        .sub(this.viewportV.div(2.0));
+
+      this.pixel00Loc = viewportUpperLeft
+        .add(this.pixelDeltaU.add(this.pixelDeltaV).mul(0.5));
+
+      const defocusRadius = this.focusDistance *
+        Math.tan(degreesToRadians(this.defocusAngle / 2.0));
+      this.defocusDiskU = u.mul(defocusRadius);
+      this.defocusDiskV = v.mul(defocusRadius);
+    }
+
+    getRay(i, j, rng) {
+      // Chapter 8: random sample inside the pixel for antialiasing.
+      const offsetX = rng() - 0.5;
+      const offsetY = rng() - 0.5;
+
+      const pixelSample = this.pixel00Loc
+        .add(this.pixelDeltaU.mul(i + offsetX))
+        .add(this.pixelDeltaV.mul(j + offsetY));
+
+      // Chapter 13: defocus disk for depth of field.
+      let rayOrigin = this.center;
+      if (this.defocusAngle > 0) {
+        const disk = Vec3.randomInUnitDisk(rng);
+        rayOrigin = this.center
+          .add(this.defocusDiskU.mul(disk.x))
+          .add(this.defocusDiskV.mul(disk.y));
+      }
+
+      return new Ray(rayOrigin, pixelSample.sub(rayOrigin));
+    }
+  }
+
+  /* ==========================================================================
+     Chapters 3, 8, 9 — Background and ray color
+     ========================================================================== */
+
+  function background(ray) {
+    const unitDirection = ray.direction.unit();
+    const t = 0.5 * (unitDirection.y + 1.0);
+    return new Color(1.0, 1.0, 1.0).mul(1.0 - t)
+      .add(new Color(0.5, 0.7, 1.0).mul(t));
+  }
+
+  let raysCast = 0;
+
+  function rayColor(ray, depth, world, maxDepth, rng) {
+    raysCast++;
+
+    if (depth <= 0) return new Color(0.0, 0.0, 0.0);
+
+    const rec = new HitRecord();
+    if (!world.hit(ray, 0.001, Infinity, rec)) {
+      return background(ray);
+    }
+
+    // Chapter 5: visualize the normal directly.
+    if (rec.material.kind === 'normal') {
+      return new Color(
+        0.5 * (rec.normal.x + 1.0),
+        0.5 * (rec.normal.y + 1.0),
+        0.5 * (rec.normal.z + 1.0)
+      );
+    }
+
+    const scattered = rec.material.scatter(ray, rec, rng);
+    if (!scattered) return new Color(0.0, 0.0, 0.0);
+
+    return scattered.attenuation.mulv(
+      rayColor(scattered.scattered, depth - 1, world, maxDepth, rng)
+    );
+  }
+
+  /* ==========================================================================
+     Seeded PRNG — mulberry32
+     Each scanline gets its own seed, so the image is deterministic regardless
+     of how many workers render it.
+     ========================================================================== */
+
+  function mulberry32(a) {
+    return function () {
+      a |= 0;
+      a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /* ==========================================================================
+     Chapter 14 — Final scene
+     ========================================================================== */
+
+  function buildFinalScene() {
+    // Scene construction uses its own fixed seed, so every worker builds the
+    // exact same world.
+    const rng = mulberry32(0x5EED1234);
+    const world = new HittableList();
+
+    // Large ground sphere.
+    world.add(new Sphere(
+      new Point3(0, -1000, 0),
+      1000,
+      new Lambertian(new Color(0.5, 0.5, 0.5))
+    ));
+
+    // Grid of small random spheres.
+    for (let a = -11; a < 11; a++) {
+      for (let b = -11; b < 11; b++) {
+        const chooseMat = rng();
+        const center = new Point3(
+          a + 0.9 * rng(),
+          0.2,
+          b + 0.9 * rng()
+        );
+
+        // Leave room for the three large spheres.
+        if (center.sub(new Point3(4, 0.2, 0)).length() < 0.9) continue;
+
+        let material;
+        if (chooseMat < 0.8) {
+          // Diffuse: albedo is the product of two random values per channel.
+          const albedo = new Color(
+            rng() * rng(),
+            rng() * rng(),
+            rng() * rng()
+          );
+          material = new Lambertian(albedo);
+        } else if (chooseMat < 0.95) {
+          // Metal.
+          const albedo = new Color(
+            0.5 + 0.5 * rng(),
+            0.5 + 0.5 * rng(),
+            0.5 + 0.5 * rng()
+          );
+          const fuzz = 0.5 * rng();
+          material = new Metal(albedo, fuzz);
+        } else {
+          // Glass.
+          material = new Dielectric(1.5);
+        }
+
+        world.add(new Sphere(center, 0.2, material));
+      }
+    }
+
+    // Three large spheres.
+    world.add(new Sphere(
+      new Point3(0, 1, 0),
+      1.0,
+      new Dielectric(1.5)
+    ));
+    world.add(new Sphere(
+      new Point3(-4, 1, 0),
+      1.0,
+      new Lambertian(new Color(0.4, 0.2, 0.1))
+    ));
+    world.add(new Sphere(
+      new Point3(4, 1, 0),
+      1.0,
+      new Metal(new Color(0.7, 0.6, 0.5), 0.0)
+    ));
+
+    world.buildBVH();
+    return world;
+  }
+
+  /* ==========================================================================
+     Earlier book milestones, rendered with the same code.
+     ========================================================================== */
+
+  function buildScene(sceneName, width, spp, maxDepth) {
+    let world;
+    let camera;
+
+    if (sceneName === 'normals') {
+      // Chapter 6: one sphere, normals as colors.
+      world = new HittableList();
+      world.add(new Sphere(
+        new Point3(0, 0, -1),
+        0.5,
+        new NormalMaterial()
+      ));
+      camera = new Camera(
+        width, 16 / 9, 90,
+        new Point3(0, 0, 0), new Point3(0, 0, -1), new Vec3(0, 1, 0),
+        0, 1, spp, maxDepth
+      );
+    } else if (sceneName === 'diffuse') {
+      // Chapter 9: a diffuse ground and a diffuse sphere.
+      world = new HittableList();
+      world.add(new Sphere(
+        new Point3(0, -100.5, -1),
+        100,
+        new Lambertian(new Color(0.8, 0.3, 0.3))
+      ));
+      world.add(new Sphere(
+        new Point3(0, 0, -1),
+        0.5,
+        new Lambertian(new Color(0.5, 0.5, 0.5))
+      ));
+      camera = new Camera(
+        width, 16 / 9, 90,
+        new Point3(0, 0, 0), new Point3(0, 0, -1), new Vec3(0, 1, 0),
+        0, 1, spp, maxDepth
+      );
+    } else if (sceneName === 'trio') {
+      // Chapters 10–11: metal and glass trio on a diffuse ground.
+      world = new HittableList();
+      world.add(new Sphere(
+        new Point3(0, -100.5, -1),
+        100,
+        new Lambertian(new Color(0.8, 0.8, 0.8))
+      ));
+      world.add(new Sphere(
+        new Point3(0, 0, -1),
+        0.5,
+        new Dielectric(1.5)
+      ));
+      world.add(new Sphere(
+        new Point3(-1, 0, -1),
+        0.5,
+        new Metal(new Color(0.8, 0.8, 0.8), 0.3)
+      ));
+      world.add(new Sphere(
+        new Point3(1, 0, -1),
+        0.5,
+        new Metal(new Color(0.8, 0.6, 0.2), 1.0)
+      ));
+      camera = new Camera(
+        width, 16 / 9, 90,
+        new Point3(0, 0, 0), new Point3(0, 0, -1), new Vec3(0, 1, 0),
+        0, 1, spp, maxDepth
+      );
+    } else {
+      // Chapter 14: the book's cover image.
+      world = buildFinalScene();
+      camera = new Camera(
+        width, 16 / 9, 20,
+        new Point3(13, 2, 3), new Point3(0, 0, 0), new Vec3(0, 1, 0),
+        0.6, 10.0, spp, maxDepth
+      );
+    }
+
+    return { world, camera };
+  }
+
+  function clamp(x, lo, hi) {
+    return x < lo ? lo : (x > hi ? hi : x);
+  }
+
+  /* ==========================================================================
+     Worker entry point
+     Each worker renders interleaved scanlines: rowStart, rowStart + rowStride,
+     ... This balances the load and lets the main thread display rows as they
+     finish.
+     ========================================================================== */
+
+  function renderRows(cfg) {
+    const width = cfg.width;
+    const height = cfg.height;
+    const spp = cfg.spp;
+    const maxDepth = cfg.maxDepth;
+    const sceneName = cfg.scene;
+    const seed = cfg.seed;
+    const rowStart = cfg.rowStart;
+    const rowStride = cfg.rowStride;
+
+    const built = buildScene(sceneName, width, spp, maxDepth);
+    const world = built.world;
+    const camera = built.camera;
+
+    raysCast = 0;
+
+    for (let y = rowStart; y < height; y += rowStride) {
+      // Deterministic per-row random stream.
+      const rowSeed = (seed ^ Math.imul(y + 1, 0x9E3779B1)) >>> 0;
+      const rng = mulberry32(rowSeed);
+
+      const row = new Uint8ClampedArray(width * 4);
+      const raysBefore = raysCast;
+
+      for (let x = 0; x < width; x++) {
+        let r = 0.0;
+        let g = 0.0;
+        let b = 0.0;
+
+        for (let s = 0; s < spp; s++) {
+          const ray = camera.getRay(x, y, rng);
+          const c = rayColor(ray, maxDepth, world, maxDepth, rng);
+          r += c.x;
+          g += c.y;
+          b += c.z;
+        }
+
+        // Average, clamp, then gamma 2 correction.
+        const scale = 1.0 / spp;
+        const idx = x * 4;
+        row[idx] = 255.0 * Math.sqrt(clamp(r * scale, 0.0, 1.0));
+        row[idx + 1] = 255.0 * Math.sqrt(clamp(g * scale, 0.0, 1.0));
+        row[idx + 2] = 255.0 * Math.sqrt(clamp(b * scale, 0.0, 1.0));
+        row[idx + 3] = 255;
+      }
+
+      const rowRays = raysCast - raysBefore;
+      self.postMessage(
+        { type: 'row', y, width, buffer: row.buffer, rays: rowRays },
+        [row.buffer]
+      );
+    }
+
+    self.postMessage({ type: 'done', rays: raysCast });
+  }
+
+  self.onmessage = function (event) {
+    const cfg = event.data;
+    if (cfg && cfg.type === 'render') {
+      renderRows(cfg);
+    }
+  };
+}
+
+/* ============================================================================
+   Main-thread UI and worker orchestration
+   ========================================================================== */
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+const presetSelect = document.getElementById('preset');
+const sceneSelect = document.getElementById('scene');
+const widthSelect = document.getElementById('width');
+const sppSelect = document.getElementById('spp');
+const depthInput = document.getElementById('depth');
+
+const renderBtn = document.getElementById('renderBtn');
+const stopBtn = document.getElementById('stopBtn');
+const downloadBtn = document.getElementById('downloadBtn');
+
+const resolutionText = document.getElementById('resolutionText');
+const sppText = document.getElementById('sppText');
+const depthText = document.getElementById('depthText');
+const elapsedText = document.getElementById('elapsedText');
+const raysText = document.getElementById('raysText');
+const progressText = document.getElementById('progressText');
+const progressText2 = document.getElementById('progressText2');
+const workersText = document.getElementById('workersText');
+const statusText = document.getElementById('statusText');
+const statusLine = document.getElementById('statusLine');
+const progressBar = document.getElementById('progressBar');
+
+const ASPECT_RATIO = 16 / 9;
+const SCENE_LABELS = {
+  normals: 'Ch.6 normals sphere',
+  diffuse: 'Ch.9 diffuse',
+  trio: 'Ch.11 metal/glass trio',
+  final: 'Final scene'
+};
+
+// Build the worker source once. The worker is a Blob URL, so there are no
+// external requests.
+const workerUrl = URL.createObjectURL(new Blob(
+  ['(' + workerMain.toString() + ')()'],
+  { type: 'application/javascript' }
+));
+
+let renderState = null;
+let imageData = null;
+let statsTimer = null;
+let paintPending = false;
+let dirty = false;
+let renderId = 0;
+
+function formatTime(ms) {
+  const total = Math.max(0, ms) / 1000;
+  if (total < 60) return total.toFixed(1) + 's';
+  const m = Math.floor(total / 60);
+  const s = total - m * 60;
+  return m + 'm ' + s.toFixed(1) + 's';
+}
+
+function formatNumber(n) {
+  if (!isFinite(n)) return '—';
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return Math.round(n).toString();
+}
+
+function schedulePaint() {
+  if (paintPending) return;
+  paintPending = true;
+  requestAnimationFrame(function () {
+    paintPending = false;
+    if (dirty && imageData) {
+      ctx.putImageData(imageData, 0, 0);
+      dirty = false;
+    }
+  });
+}
+
+function updateStats() {
+  const state = renderState;
+  if (!state) return;
+
+  const now = state.done ? state.endTime : performance.now();
+  const elapsedMs = Math.max(0, now - state.startTime);
+  const elapsedSec = Math.max(0.001, elapsedMs / 1000);
+  const progress = state.height > 0 ? state.rowsDone / state.height : 0;
+  const pct = Math.round(progress * 100);
+
+  progressBar.style.width = (progress * 100).toFixed(1) + '%';
+  progressText.textContent = pct + '%';
+  progressText2.textContent = pct + '%';
+  elapsedText.textContent = formatTime(elapsedMs);
+  raysText.textContent = state.totalRays > 0
+    ? formatNumber(state.totalRays / elapsedSec) + '/s'
+    : '—';
+  resolutionText.textContent = state.width + '×' + state.height;
+  sppText.textContent = state.spp;
+  depthText.textContent = state.maxDepth;
+  workersText.textContent = state.workers.length || '—';
+  statusText.textContent = state.status;
+
+  stopBtn.disabled = state.done || state.workers.length === 0;
+  downloadBtn.disabled = state.rowsDone === 0;
+
+  if (state.done) {
+    statusLine.innerHTML = '<strong>' + state.status + '</strong> — ' +
+      state.width + '×' + state.height + ', ' + state.spp + ' spp, ' +
+      state.maxDepth + ' bounces, ' + formatTime(elapsedMs) +
+      (state.preview ? '. Press Render to use the controls above.' : '.');
+  } else {
+    statusLine.innerHTML = '<strong>' + state.status + '</strong> — ' +
+      SCENE_LABELS[state.scene] + ', ' + state.width + '×' + state.height +
+      ', ' + state.spp + ' spp, ' + state.workers.length + ' workers.';
+  }
+}
+
+function onWorkerMessage(state, data) {
+  if (renderState !== state || !state.accepting) return;
+
+  if (data.type === 'row') {
+    const row = new Uint8ClampedArray(data.buffer);
+    imageData.data.set(row, data.y * state.width * 4);
+    state.rowsDone++;
+    state.totalRays += data.rays;
+    dirty = true;
+    schedulePaint();
+  } else if (data.type === 'done') {
+    state.doneWorkers++;
+    if (state.doneWorkers >= state.workers.length) {
+      state.done = true;
+      state.endTime = performance.now();
+      state.status = state.preview ? 'Preview complete' : 'Done';
+      if (statsTimer) {
+        clearInterval(statsTimer);
+        statsTimer = null;
+      }
+      updateStats();
+      schedulePaint();
+    }
+  }
+}
+
+function onWorkerError(state, event) {
+  if (renderState !== state) return;
+  console.error('Render worker error:', event.message || event);
+  state.status = 'Worker error';
+  stopRender(true);
+}
+
+function stopRender(updateUI) {
+  if (statsTimer) {
+    clearInterval(statsTimer);
+    statsTimer = null;
+  }
+
+  const state = renderState;
+  if (!state) return;
+
+  state.accepting = false;
+  for (let i = 0; i < state.workers.length; i++) {
+    state.workers[i].terminate();
+  }
+  state.workers = [];
+
+  if (!state.done) {
+    state.done = true;
+    state.endTime = performance.now();
+    state.status = 'Stopped';
+  }
+
+  if (updateUI) updateStats();
+}
+
+function startRender(options) {
+  stopRender(false);
+
+  const width = options.width;
+  const height = Math.max(1, Math.floor(width / ASPECT_RATIO));
+  const spp = options.spp;
+  const maxDepth = options.maxDepth;
+  const scene = options.scene;
+
+  canvas.width = width;
+  canvas.height = height;
+
+  imageData = ctx.createImageData(width, height);
+
+  // Dark placeholder so the canvas is never transparent while rows arrive.
+  const pixels = imageData.data;
+  for (let i = 0; i < pixels.length; i += 4) {
+    pixels[i] = 12;
+    pixels[i + 1] = 14;
+    pixels[i + 2] = 20;
+    pixels[i + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+
+  const state = {
+    id: ++renderId,
+    width: width,
+    height: height,
+    spp: spp,
+    maxDepth: maxDepth,
+    scene: scene,
+    rowsDone: 0,
+    totalRays: 0,
+    startTime: performance.now(),
+    endTime: 0,
+    workers: [],
+    doneWorkers: 0,
+    done: false,
+    accepting: true,
+    preview: !!options.preview,
+    status: 'Rendering…'
+  };
+  renderState = state;
+
+  const hardware = navigator.hardwareConcurrency || 4;
+  const workerCount = Math.min(8, Math.max(1, hardware), height);
+
+  for (let i = 0; i < workerCount; i++) {
+    const worker = new Worker(workerUrl);
+    worker.onmessage = function (event) {
+      onWorkerMessage(state, event.data);
+    };
+    worker.onerror = function (event) {
+      onWorkerError(state, event);
+    };
+    worker.postMessage({
+      type: 'render',
+      width: width,
+      height: height,
+      spp: spp,
+      maxDepth: maxDepth,
+      scene: scene,
+      seed: 0xC0FFEE,
+      rowStart: i,
+      rowStride: workerCount
+    });
+    state.workers.push(worker);
+  }
+
+  updateStats();
+  statsTimer = setInterval(updateStats, 100);
+  schedulePaint();
+}
+
+function startRenderFromControls() {
+  const width = parseInt(widthSelect.value, 10);
+  const spp = parseInt(sppSelect.value, 10);
+  const maxDepth = Math.max(1, Math.min(200, parseInt(depthInput.value, 10) || 50));
+  const scene = sceneSelect.value;
+  startRender({ width: width, spp: spp, maxDepth: maxDepth, scene: scene });
+}
+
+presetSelect.addEventListener('change', function () {
+  const preset = presetSelect.value;
+  if (preset === 'quick') {
+    widthSelect.value = '200';
+    sppSelect.value = '10';
+  } else if (preset === 'balanced') {
+    widthSelect.value = '400';
+    sppSelect.value = '50';
+  } else if (preset === 'final') {
+    widthSelect.value = '800';
+    sppSelect.value = '200';
+  }
+  startRenderFromControls();
+});
+
+sceneSelect.addEventListener('change', function () {
+  startRenderFromControls();
+});
+
+renderBtn.addEventListener('click', function () {
+  startRenderFromControls();
+});
+
+stopBtn.addEventListener('click', function () {
+  stopRender(true);
+});
+
+downloadBtn.addEventListener('click', function () {
+  if (!canvas.width || !canvas.height) return;
+
+  canvas.toBlob(function (blob) {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const state = renderState;
+    const sceneName = state ? state.scene : 'scene';
+    const width = state ? state.width : canvas.width;
+    const height = state ? state.height : canvas.height;
+    const spp = state ? state.spp : 0;
+    link.href = url;
+    link.download = 'raytracing-' + sceneName + '-' + width + 'x' + height +
+      '-' + spp + 'spp.png';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }, 'image/png');
+});
+
+window.addEventListener('beforeunload', function () {
+  stopRender(false);
+});
+
+// Auto-render a quick preview of the final scene on load. The controls keep
+// their 400 px / 50 spp defaults; pressing Render uses those.
+startRender({
+  width: 200,
+  spp: 10,
+  maxDepth: 50,
+  scene: 'final',
+  preview: true
+});
+</script>
+</body>
+</html>
