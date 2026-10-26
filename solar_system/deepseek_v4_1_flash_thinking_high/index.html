@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Solar System — three.js</title>
+<style>
+  /* ==========================================================
+     Layout & theme
+     ========================================================== */
+  :root {
+    --fg: #e2eaff;
+    --muted: #8b9cc0;
+    --glass: rgba(10, 16, 30, 0.58);
+    --border: rgba(120, 160, 255, 0.16);
+    --accent: #7fb2ff;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #01020a;
+  }
+
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--fg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  #scene {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    outline: none;
+  }
+
+  /* Soft vignette to focus the eye on the system */
+  #vignette {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 50% 45%, rgba(0, 0, 0, 0) 45%, rgba(0, 0, 0, 0.55) 100%);
+  }
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  /* Shown while the procedural textures are generated on the main thread */
+  #loading {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    display: grid;
+    place-items: center;
+    background: #01020a;
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    transition: opacity 0.5s ease;
+  }
+
+  #loading.is-done {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* ==========================================================
+     Planet labels (positioned each frame from JS)
+     ========================================================== */
+  #labels {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+
+  .label {
+    position: absolute;
+    top: 0;
+    left: 0;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(198, 216, 255, 0.78);
+    text-shadow: 0 0 10px rgba(0, 0, 0, 0.9), 0 0 3px rgba(0, 0, 0, 0.9);
+    white-space: nowrap;
+    will-change: transform, opacity;
+    transition: opacity 0.25s ease;
+    pointer-events: none;
+  }
+
+  .label.is-hidden { opacity: 0; }
+
+  /* ==========================================================
+     Chrome: header, hint, control panel
+     ========================================================== */
+  header {
+    position: absolute;
+    top: 22px;
+    left: 26px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+  }
+
+  header p {
+    margin: 7px 0 0;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+  }
+
+  #hint {
+    position: absolute;
+    top: 24px;
+    right: 26px;
+    font-size: 11px;
+    line-height: 1.75;
+    color: var(--muted);
+    text-align: right;
+  }
+
+  #hint kbd {
+    font: inherit;
+    color: rgba(200, 218, 255, 0.85);
+  }
+
+  #panel {
+    position: absolute;
+    left: 50%;
+    bottom: 20px;
+    transform: translateX(-50%);
+    width: min(580px, calc(100vw - 28px));
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--glass);
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    pointer-events: auto;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  button {
+    font: inherit;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: var(--fg);
+    background: rgba(120, 160, 255, 0.07);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+  }
+
+  button:hover {
+    background: rgba(120, 160, 255, 0.17);
+    border-color: rgba(120, 160, 255, 0.34);
+  }
+
+  button:focus-visible {
+    outline: 2px solid rgba(127, 178, 255, 0.7);
+    outline-offset: 2px;
+  }
+
+  button.active {
+    background: rgba(127, 178, 255, 0.22);
+    border-color: rgba(127, 178, 255, 0.5);
+    color: #ffffff;
+  }
+
+  #btn-pause {
+    width: 34px;
+    height: 30px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    font-size: 10px;
+    letter-spacing: 0;
+  }
+
+  .slider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 190px;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+  }
+
+  .slider input[type="range"] {
+    flex: 1;
+    min-width: 80px;
+    height: 3px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .slider output {
+    min-width: 42px;
+    text-align: right;
+    color: rgba(210, 226, 255, 0.9);
+    font-variant-numeric: tabular-nums;
+  }
+
+  #bodies {
+    gap: 6px;
+  }
+
+  #bodies button {
+    padding: 4px 9px;
+    font-size: 10px;
+    border-radius: 999px;
+    color: var(--muted);
+  }
+
+  #bodies button:hover { color: var(--fg); }
+
+  #bodies button.active {
+    color: #ffffff;
+    background: rgba(127, 178, 255, 0.26);
+    border-color: rgba(127, 178, 255, 0.55);
+  }
+
+  @media (max-width: 640px) {
+    header { top: 16px; left: 18px; }
+    h1 { font-size: 12px; letter-spacing: 0.2em; }
+    header p { display: none; }
+    #hint { display: none; }
+    #panel { bottom: 12px; padding: 10px; gap: 8px; }
+    .slider { min-width: 150px; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div id="vignette"></div>
+  <div id="loading">Generating worlds&hellip;</div>
+
+  <div id="overlay">
+    <div id="labels"></div>
+
+    <header>
+      <h1>Solar System</h1>
+      <p>Procedural three.js orrery</p>
+    </header>
+
+    <div id="hint">
+      Drag to orbit &middot; Scroll to zoom<br />
+      Click a body to follow &middot; <kbd>Space</kbd> pause &middot; <kbd>R</kbd> reset
+    </div>
+
+    <div id="panel">
+      <div class="row">
+        <button id="btn-pause" title="Pause / resume (Space)" aria-label="Pause">❚❚</button>
+        <label class="slider">
+          <span>Speed</span>
+          <input id="speed" type="range" min="0" max="4" step="0.05" value="1" aria-label="Orbit speed" />
+          <output id="speed-out">1.0&times;</output>
+        </label>
+      </div>
+      <div class="row">
+        <button id="btn-orbits" class="active">Orbits</button>
+        <button id="btn-labels" class="active">Labels</button>
+        <button id="btn-reset">Reset view</button>
+      </div>
+      <div class="row" id="bodies"></div>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+  /* ============================================================
+     0. Small math helpers
+     ============================================================ */
+  const TAU = Math.PI * 2;
+  const { lerp, clamp, smoothstep } = THREE.MathUtils;
+
+  /* ============================================================
+     1. Procedural noise (seamless in X, so sphere maps have no seam)
+     ============================================================ */
+  function hash2(x, y) {
+    let h = Math.imul(x, 374761393) + Math.imul(y, 668265263);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    h ^= h >>> 16;
+    return (h >>> 0) / 4294967295;
+  }
+
+  /** Value noise whose lattice wraps every `period` units along X. */
+  function noise2(x, y, period) {
+    const xi = Math.floor(x);
+    const yi = Math.floor(y);
+    const xf = x - xi;
+    const yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf);
+    const v = yf * yf * (3 - 2 * yf);
+
+    const x0 = ((xi % period) + period) % period;
+    const x1 = (x0 + 1) % period;
+
+    const a = hash2(x0, yi);
+    const b = hash2(x1, yi);
+    const c = hash2(x0, yi + 1);
+    const d = hash2(x1, yi + 1);
+
+    const top = a + (b - a) * u;
+    const bottom = c + (d - c) * u;
+    return top + (bottom - top) * v;
+  }
+
+  /** Fractal Brownian motion built on the wrapping value noise. */
+  function fbm(x, y, period, octaves = 4, gain = 0.5, lacunarity = 2) {
+    let sum = 0;
+    let amp = 1;
+    let norm = 0;
+    let p = period;
+    let fx = x;
+    let fy = y;
+    for (let i = 0; i < octaves; i++) {
+      sum += amp * noise2(fx, fy, p);
+      norm += amp;
+      amp *= gain;
+      fx *= lacunarity;
+      fy *= lacunarity;
+      p *= lacunarity;
+    }
+    return sum / norm;
+  }
+
+  /* ============================================================
+     2. Canvas texture utilities
+     ============================================================ */
+  function makeCanvas(w, h) {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    return c;
+  }
+
+  let maxAnisotropy = 1;
+
+  function canvasTexture(canvas, srgb = true) {
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.anisotropy = maxAnisotropy;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  /** Fill a canvas pixel-by-pixel using a `shade(u, v) -> [r, g, b]` callback. */
+  function paintTexture(W, H, shade) {
+    const canvas = makeCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(W, H);
+    const data = img.data;
+
+    for (let y = 0; y < H; y++) {
+      const v = y / (H - 1);
+      for (let x = 0; x < W; x++) {
+        const u = x / W;
+        const rgb = shade(u, v);
+        const i = (y * W + x) << 2;
+        data[i] = rgb[0];
+        data[i + 1] = rgb[1];
+        data[i + 2] = rgb[2];
+        data[i + 3] = 255;
+      }
+    }
+
+    ctx.putImageData(img, 0, 0);
+    return { canvas, ctx };
+  }
+
+  /** Stamp soft impact craters onto an existing texture. */
+  function addCraters(ctx, W, H, count, seed) {
+    let s = seed;
+    const rnd = () => {
+      s = (s * 16807) % 2147483647;
+      return s / 2147483647;
+    };
+
+    for (let i = 0; i < count; i++) {
+      const cx = rnd() * W;
+      const cy = H * (0.1 + rnd() * 0.8);
+      const r = (2 + rnd() * 9) * (W / 512);
+
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      g.addColorStop(0, 'rgba(0, 0, 0, 0.26)');
+      g.addColorStop(0.62, 'rgba(0, 0, 0, 0.11)');
+      g.addColorStop(0.86, 'rgba(255, 255, 255, 0.10)');
+      g.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  /* ============================================================
+     3. Renderer / scene / camera
+     ============================================================ */
+  const canvas = document.getElementById('scene');
+
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: true,
+    powerPreference: 'high-performance',
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x01020a);
+
+  const camera = new THREE.PerspectiveCamera(
+    50,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    5000
+  );
+  const HOME_POSITION = new THREE.Vector3(0, 62, 140);
+  camera.position.copy(HOME_POSITION);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.055;
+  controls.rotateSpeed = 0.65;
+  controls.zoomSpeed = 0.9;
+  controls.panSpeed = 0.6;
+  controls.minDistance = 2;
+  controls.maxDistance = 520;
+  controls.maxPolarAngle = Math.PI * 0.96;
+  controls.target.set(0, 0, 0);
+
+  /* ============================================================
+     4. Lighting
+     ============================================================ */
+  const sunLight = new THREE.PointLight(0xfff0d8, 3.2, 0, 0);
+  scene.add(sunLight);
+
+  // A whisper of ambient so night sides read as dark blue rather than pure black.
+  scene.add(new THREE.AmbientLight(0x2a3a5c, 0.5));
+
+  /* ============================================================
+     5. Shared sprite textures (glow + star dot)
+     ============================================================ */
+  function createGlowTexture() {
+    const S = 256;
+    const c = makeCanvas(S, S);
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+    g.addColorStop(0.0, 'rgba(255, 246, 214, 1)');
+    g.addColorStop(0.16, 'rgba(255, 206, 120, 0.72)');
+    g.addColorStop(0.42, 'rgba(255, 148, 52, 0.20)');
+    g.addColorStop(1.0, 'rgba(255, 96, 20, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S, S);
+    return canvasTexture(c);
+  }
+
+  function createStarTexture() {
+    const S = 64;
+    const c = makeCanvas(S, S);
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+    g.addColorStop(0.0, 'rgba(255, 255, 255, 1)');
+    g.addColorStop(0.35, 'rgba(255, 255, 255, 0.55)');
+    g.addColorStop(1.0, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S, S);
+    return canvasTexture(c);
+  }
+
+  const glowTexture = createGlowTexture();
+  const starTexture = createStarTexture();
+
+  /* ============================================================
+     6. Starfield
+     ============================================================ */
+  function createStarfield() {
+    const COUNT = 7000;
+    const positions = new Float32Array(COUNT * 3);
+    const colors = new Float32Array(COUNT * 3);
+    const color = new THREE.Color();
+
+    for (let i = 0; i < COUNT; i++) {
+      const r = 340 + Math.random() * 520;
+      const theta = Math.random() * TAU;
+      const phi = Math.acos(2 * Math.random() - 1);
+
+      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = r * Math.cos(phi);
+      positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+
+      // Mostly cool white, occasionally warm — like a real sky.
+      const warm = Math.random() < 0.18;
+      color.setHSL(
+        warm ? 0.09 : 0.58 + Math.random() * 0.06,
+        0.15 + Math.random() * 0.35,
+        0.62 + Math.random() * 0.34
+      );
+      colors[i * 3] = color.r;
+      colors[i * 3 + 1] = color.g;
+      colors[i * 3 + 2] = color.b;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    const mat = new THREE.PointsMaterial({
+      size: 5.5,
+      map: starTexture,
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
+    });
+
+    const points = new THREE.Points(geo, mat);
+    points.frustumCulled = false;
+    return points;
+  }
+
+  scene.add(createStarfield());
+
+  /* ============================================================
+     7. Texture factories for the bodies
+     ============================================================ */
+  function createEarthTextures() {
+    const W = 1024;
+    const H = 512;
+    const canvasEl = makeCanvas(W, H);
+    const ctx = canvasEl.getContext('2d');
+    const img = ctx.createImageData(W, H);
+    const d = img.data;
+
+    const BW = W >> 1;
+    const BH = H >> 1;
+    const bumpCanvas = makeCanvas(BW, BH);
+    const bctx = bumpCanvas.getContext('2d');
+    const bimg = bctx.createImageData(BW, BH);
+    const bd = bimg.data;
+
+    for (let y = 0; y < H; y++) {
+      const v = y / (H - 1);
+      const latAbs = Math.abs(0.5 - v) * 2; // 0 at equator, 1 at poles
+
+      for (let x = 0; x < W; x++) {
+        const u = x / W;
+
+        // Two scales of noise: fine detail + a low-frequency continent mask.
+        const detail = fbm(u * 8, v * 4, 8, 5, 0.5, 2);
+        const mask = fbm(u * 3 + 0.37, v * 1.5 + 0.11, 3, 3, 0.5, 2);
+        const h = detail * 0.62 + mask * 0.38;
+
+        let r, g, b;
+
+        if (h < 0.47) {
+          // Deep ocean
+          const t = h / 0.47;
+          r = 5 + 10 * t;
+          g = 20 + 34 * t;
+          b = 52 + 56 * t;
+        } else if (h < 0.505) {
+          // Shelf / shallow water
+          const t = (h - 0.47) / 0.035;
+          r = 15 + 22 * t;
+          g = 54 + 46 * t;
+          b = 108 + 40 * t;
+        } else if (h < 0.525) {
+          // Sand
+          const t = (h - 0.505) / 0.02;
+          r = 37 + 160 * t;
+          g = 100 + 90 * t;
+          b = 148;
+        } else if (h < 0.6) {
+          // Lowland vegetation
+          const t = (h - 0.525) / 0.075;
+          r = 197 - 140 * t;
+          g = 190 - 80 * t;
+          b = 148 - 90 * t;
+        } else if (h < 0.68) {
+          // Forest / highland
+          const t = (h - 0.6) / 0.08;
+          r = 57 + 40 * t;
+          g = 110 - 20 * t;
+          b = 58 + 20 * t;
+        } else {
+          // Rock and snow
+          const t = Math.min(1, (h - 0.68) / 0.12);
+          r = 97 + 90 * t;
+          g = 90 + 95 * t;
+          b = 78 + 105 * t;
+        }
+
+        // Polar ice caps, softened by noise so the edge is ragged.
+        const ice = smoothstep(latAbs, 0.8, 0.97) * (0.72 + 0.28 * detail);
+        if (ice > 0) {
+          r += (238 - r) * ice;
+          g += (244 - g) * ice;
+          b += (252 - b) * ice;
+        }
+
+        const i = (y * W + x) << 2;
+        d[i] = r;
+        d[i + 1] = g;
+        d[i + 2] = b;
+        d[i + 3] = 255;
+
+        // Half-resolution bump map, sampled from the same height field.
+        if ((x & 1) === 0 && (y & 1) === 0) {
+          const bi = ((y >> 1) * BW + (x >> 1)) << 2;
+          const height = h < 0.5 ? 40 : Math.min(255, 40 + (h - 0.5) * 420);
+          bd[bi] = height;
+          bd[bi + 1] = height;
+          bd[bi + 2] = height;
+          bd[bi + 3] = 255;
+        }
+      }
+    }
+
+    ctx.putImageData(img, 0, 0);
+    bctx.putImageData(bimg, 0, 0);
+
+    return {
+      map: canvasTexture(canvasEl),
+      bumpMap: canvasTexture(bumpCanvas, false),
+    };
+  }
+
+  function createCloudTexture() {
+    const W = 1024;
+    const H = 512;
+    const canvasEl = makeCanvas(W, H);
+    const ctx = canvasEl.getContext('2d');
+    const img = ctx.createImageData(W, H);
+    const d = img.data;
+
+    for (let y = 0; y < H; y++) {
+      const v = y / (H - 1);
+      for (let x = 0; x < W; x++) {
+        const u = x / W;
+        const n = fbm(u * 7 + 0.5, v * 3.5, 7, 4, 0.55, 2);
+        const swirl = fbm(u * 3, v * 6, 3, 2, 0.5, 2) * 0.35;
+        const alpha = smoothstep(n * 0.8 + swirl, 0.5, 0.72);
+
+        const i = (y * W + x) << 2;
+        d[i] = 255;
+        d[i + 1] = 255;
+        d[i + 2] = 255;
+        d[i + 3] = alpha * 235;
+      }
+    }
+
+    ctx.putImageData(img, 0, 0);
+    return canvasTexture(canvasEl);
+  }
+
+  function createSunTexture() {
+    const { canvas: c } = paintTexture(1024, 512, (u, v) => {
+      const n = fbm(u * 12, v * 6, 12, 5, 0.55, 2);
+      const fine = fbm(u * 30, v * 15, 30, 3, 0.5, 2);
+      const t = n * 0.6 + fine * 0.4;
+      return [255, 132 + t * 118, 26 + t * 96];
+    });
+    return canvasTexture(c);
+  }
+
+  function createRingTexture() {
+    const W = 512;
+    const H = 32;
+    const canvasEl = makeCanvas(W, H);
+    const ctx = canvasEl.getContext('2d');
+    const img = ctx.createImageData(W, H);
+    const d = img.data;
+
+    for (let x = 0; x < W; x++) {
+      const t = x / (W - 1);
+
+      // Layered banding plus a Cassini-style division.
+      const band = 0.55 + 0.45 * Math.sin(t * 92) * Math.sin(t * 23 + 1.3);
+      const gap = t > 0.42 && t < 0.47 ? 0.06 : 1;
+      const edge =
+        smoothstep(t, 0, 0.05) * (1 - smoothstep(t, 0.93, 1));
+      const alpha = clamp(band * gap * edge, 0, 1);
+      const shade = 150 + 62 * band;
+
+      for (let y = 0; y < H; y++) {
+        const i = (y * W + x) << 2;
+        d[i] = shade;
+        d[i + 1] = shade * 0.93;
+        d[i + 2] = shade * 0.79;
+        d[i + 3] = alpha * 240;
+      }
+    }
+
+    ctx.putImageData(img, 0, 0);
+    return canvasTexture(canvasEl);
+  }
+
+  /* ============================================================
+     8. Body definitions
+     ============================================================ */
+  const SUN_RADIUS = 6;
+
+  const PLANET_DATA = [
+    {
+      name: 'Mercury',
+      radius: 0.5,
+      orbit: 13,
+      period: 88,
+      spin: 0.15,
+      tilt: 0.001,
+      inclination: 0.12,
+      texture: () => {
+        const { canvas: c, ctx } = paintTexture(512, 256, (u, v) => {
+          const n = fbm(u * 9, v * 4.5, 9, 4, 0.5, 2);
+          const m = fbm(u * 22, v * 11, 22, 3, 0.5, 2);
+          const t = n * 0.7 + m * 0.3;
+          const g = 78 + t * 92;
+          return [g, g * 0.97, g * 0.92];
+        });
+        addCraters(ctx, 512, 256, 90, 1337);
+        return canvasTexture(c);
+      },
+    },
+    {
+      name: 'Venus',
+      radius: 0.95,
+      orbit: 18,
+      period: 224.7,
+      spin: -0.08,
+      tilt: 0.05,
+      inclination: 0.06,
+      texture: () => {
+        const { canvas: c } = paintTexture(512, 256, (u, v) => {
+          const n = fbm(u * 5, v * 2.5, 5, 4, 0.55, 2);
+          const swirl = Math.sin(v * 26 + n * 7) * 0.5 + 0.5;
+          const t = n * 0.6 + swirl * 0.4;
+          return [222 + t * 26, 186 + t * 34, 108 + t * 52];
+        });
+        return canvasTexture(c);
+      },
+    },
+    {
+      name: 'Earth',
+      radius: 1.0,
+      orbit: 24,
+      period: 365.25,
+      spin: 0.9,
+      tilt: 0.409, // 23.4 degrees
+      inclination: 0,
+      earth: true,
+    },
+    {
+      name: 'Mars',
+      radius: 0.65,
+      orbit: 31,
+      period: 687,
+      spin: 0.85,
+      tilt: 0.44,
+      inclination: 0.03,
+      texture: () => {
+        const { canvas: c, ctx } = paintTexture(512, 256, (u, v) => {
+          const n = fbm(u * 7, v * 3.5, 7, 5, 0.5, 2);
+          const m = fbm(u * 18, v * 9, 18, 3, 0.5, 2);
+          const t = n * 0.65 + m * 0.35;
+
+          let r = 120 + t * 110;
+          let g = 56 + t * 62;
+          let b = 34 + t * 40;
+
+          const cap = smoothstep(Math.abs(v - 0.5) * 2, 0.86, 0.99);
+          r = lerp(r, 240, cap);
+          g = lerp(g, 238, cap);
+          b = lerp(b, 232, cap);
+          return [r, g, b];
+        });
+        addCraters(ctx, 512, 256, 40, 90210);
+        return canvasTexture(c);
+      },
+    },
+    {
+      name: 'Jupiter',
+      radius: 2.9,
+      orbit: 46,
+      period: 4333,
+      spin: 1.6,
+      tilt: 0.05,
+      inclination: 0.02,
+      texture: () => {
+        const W = 1024;
+        const H = 512;
+        const { canvas: c, ctx } = paintTexture(W, H, (u, v) => {
+          const n = fbm(u * 6, v * 3, 6, 4, 0.5, 2);
+          const band = Math.sin(v * Math.PI * 18 + n * 3.2) * 0.5 + 0.5;
+          const fine = Math.sin(v * Math.PI * 46 + n * 6) * 0.5 + 0.5;
+          const t = band * 0.7 + fine * 0.3;
+          return [lerp(196, 240, t), lerp(150, 214, t), lerp(112, 176, t)];
+        });
+
+        // Great Red Spot
+        const cx = W * 0.68;
+        const cy = H * 0.62;
+        const rad = W * 0.085;
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+        g.addColorStop(0, 'rgba(196, 96, 66, 0.95)');
+        g.addColorStop(0.55, 'rgba(178, 92, 68, 0.55)');
+        g.addColorStop(1, 'rgba(178, 92, 68, 0)');
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(1, 0.55);
+        ctx.translate(-cx, -cy);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, TAU);
+        ctx.fill();
+        ctx.restore();
+
+        return canvasTexture(c);
+      },
+    },
+    {
+      name: 'Saturn',
+      radius: 2.5,
+      orbit: 62,
+      period: 10759,
+      spin: 1.4,
+      tilt: 0.47,
+      inclination: 0.04,
+      ring: { inner: 1.35, outer: 2.35 },
+      texture: () => {
+        const { canvas: c } = paintTexture(1024, 512, (u, v) => {
+          const n = fbm(u * 5, v * 2.5, 5, 4, 0.5, 2);
+          const band = Math.sin(v * Math.PI * 14 + n * 2.5) * 0.5 + 0.5;
+          const t = band * 0.75 + n * 0.25;
+          return [lerp(206, 240, t), lerp(186, 222, t), lerp(146, 188, t)];
+        });
+        return canvasTexture(c);
+      },
+    },
+    {
+      name: 'Uranus',
+      radius: 1.7,
+      orbit: 76,
+      period: 30687,
+      spin: 1.0,
+      tilt: 1.71, // 98 degrees — it rolls on its side
+      inclination: 0.02,
+      texture: () => {
+        const { canvas: c } = paintTexture(512, 256, (u, v) => {
+          const n = fbm(u * 4, v * 2, 4, 3, 0.5, 2);
+          const band = Math.sin(v * Math.PI * 8 + n * 2) * 0.5 + 0.5;
+          const t = 0.5 + band * 0.16 + n * 0.2;
+          return [150 + t * 50, 208 + t * 30, 214 + t * 30];
+        });
+        return canvasTexture(c);
+      },
+    },
+    {
+      name: 'Neptune',
+      radius: 1.65,
+      orbit: 88,
+      period: 60190,
+      spin: 0.95,
+      tilt: 0.49,
+      inclination: 0.03,
+      texture: () => {
+        const { canvas: c } = paintTexture(512, 256, (u, v) => {
+          const n = fbm(u * 5, v * 2.5, 5, 4, 0.5, 2);
+          const band = Math.sin(v * Math.PI * 10 + n * 3) * 0.5 + 0.5;
+          const t = band * 0.6 + n * 0.4;
+          return [40 + t * 62, 90 + t * 72, 180 + t * 62];
+        });
+        return canvasTexture(c);
+      },
+    },
+  ];
+
+  /* ============================================================
+     9. Build the scene graph
+     ============================================================ */
+  const bodies = [];        // everything that can be labelled / picked
+  const pickables = [];     // meshes for raycasting
+  const orbitLines = [];    // toggled by the UI
+  const planets = [];       // animated orbital bodies
+
+  const labelLayer = document.getElementById('labels');
+  const labelElements = new Map();
+
+  function registerBody(name, mesh, radius) {
+    const el = document.createElement('div');
+    el.className = 'label';
+    el.textContent = name;
+    labelLayer.appendChild(el);
+    labelElements.set(name, el);
+
+    const body = { name, mesh, radius, el };
+    bodies.push(body);
+    pickables.push(mesh);
+    mesh.userData.body = body;
+    return body;
+  }
+
+  /* ---------- Sun ---------- */
+  const sunGroup = new THREE.Group();
+  scene.add(sunGroup);
+
+  const sunMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(SUN_RADIUS, 64, 32),
+    new THREE.MeshBasicMaterial({ map: createSunTexture() })
+  );
+  sunGroup.add(sunMesh);
+
+  const sunGlow = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: glowTexture,
+      color: 0xffffff,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    })
+  );
+  sunGlow.scale.setScalar(SUN_RADIUS * 7.5);
+  sunGroup.add(sunGlow);
+
+  const sunBody = registerBody('Sun', sunMesh, SUN_RADIUS);
+
+  /* ---------- Planets ---------- */
+  const earthTextures = createEarthTextures();
+  const cloudTexture = createCloudTexture();
+  const ringTexture = createRingTexture();
+
+  for (const data of PLANET_DATA) {
+    // Parent group carries the orbital inclination.
+    const orbitGroup = new THREE.Group();
+    orbitGroup.rotation.x = data.inclination;
+    scene.add(orbitGroup);
+
+    // Holder is repositioned every frame along the orbit.
+    const holder = new THREE.Group();
+    orbitGroup.add(holder);
+
+    // Axial tilt lives on its own group so spin stays clean.
+    const tiltGroup = new THREE.Group();
+    tiltGroup.rotation.z = data.tilt;
+    holder.add(tiltGroup);
+
+    let material;
+    if (data.earth) {
+      material = new THREE.MeshStandardMaterial({
+        map: earthTextures.map,
+        bumpMap: earthTextures.bumpMap,
+        bumpScale: 0.05,
+        roughness: 0.82,
+        metalness: 0.0,
+      });
+    } else {
+      material = new THREE.MeshStandardMaterial({
+        map: data.texture(),
+        roughness: 0.92,
+        metalness: 0.0,
+      });
+    }
+
+    const segments = data.radius > 2 ? 64 : 48;
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(data.radius, segments, segments / 2),
+      material
+    );
+    tiltGroup.add(mesh);
+
+    const body = registerBody(data.name, mesh, data.radius);
+
+    // Earth extras: clouds + atmosphere rim.
+    let clouds = null;
+    if (data.earth) {
+      clouds = new THREE.Mesh(
+        new THREE.SphereGeometry(data.radius * 1.015, 48, 24),
+        new THREE.MeshStandardMaterial({
+          map: cloudTexture,
+          transparent: true,
+          depthWrite: false,
+          roughness: 1,
+          metalness: 0,
+          opacity: 0.85,
+        })
+      );
+      tiltGroup.add(clouds);
+
+      const atmosphere = new THREE.Mesh(
+        new THREE.SphereGeometry(data.radius * 1.09, 48, 24),
+        new THREE.ShaderMaterial({
+          uniforms: {
+            uColor: { value: new THREE.Color(0x5aa2ff) },
+            uIntensity: { value: 0.85 },
+          },
+          vertexShader: /* glsl */ `
+            varying vec3 vNormal;
+            varying vec3 vViewDir;
+            void main() {
+              vNormal = normalize(normalMatrix * normal);
+              vec4 mv = modelViewMatrix * vec4(position, 1.0);
+              vViewDir = normalize(-mv.xyz);
+              gl_Position = projectionMatrix * mv;
+            }
+          `,
+          fragmentShader: /* glsl */ `
+            uniform vec3 uColor;
+            uniform float uIntensity;
+            varying vec3 vNormal;
+            varying vec3 vViewDir;
+            void main() {
+              float rim = pow(1.0 - abs(dot(vNormal, vViewDir)), 3.0);
+              gl_FragColor = vec4(uColor, rim * uIntensity);
+            }
+          `,
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          side: THREE.BackSide,
+          depthWrite: false,
+        })
+      );
+      tiltGroup.add(atmosphere);
+    }
+
+    // Saturn's rings.
+    if (data.ring) {
+      const inner = data.radius * data.ring.inner;
+      const outer = data.radius * data.ring.outer;
+      const ringGeo = new THREE.RingGeometry(inner, outer, 160, 1);
+
+      // Remap UVs so the texture runs radially instead of around the ring.
+      const pos = ringGeo.attributes.position;
+      const uv = ringGeo.attributes.uv;
+      const v3 = new THREE.Vector3();
+      for (let i = 0; i < pos.count; i++) {
+        v3.fromBufferAttribute(pos, i);
+        const r = v3.length();
+        uv.setXY(i, (r - inner) / (outer - inner), 0.5);
+      }
+      uv.needsUpdate = true;
+
+      const ring = new THREE.Mesh(
+        ringGeo,
+        new THREE.MeshBasicMaterial({
+          map: ringTexture,
+          transparent: true,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          opacity: 0.92,
+        })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      tiltGroup.add(ring);
+    }
+
+    // Orbit path.
+    const orbitPoints = [];
+    const SEGMENTS = 256;
+    for (let i = 0; i < SEGMENTS; i++) {
+      const a = (i / SEGMENTS) * TAU;
+      orbitPoints.push(
+        new THREE.Vector3(Math.cos(a) * data.orbit, 0, Math.sin(a) * data.orbit)
+      );
+    }
+    const orbitLine = new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints(orbitPoints),
+      new THREE.LineBasicMaterial({
+        color: data.earth ? 0x4f7bb8 : 0x35486b,
+        transparent: true,
+        opacity: data.earth ? 0.7 : 0.5,
+      })
+    );
+    orbitGroup.add(orbitLine);
+    orbitLines.push(orbitLine);
+
+    const planet = {
+      name: data.name,
+      holder,
+      mesh,
+      clouds,
+      angle: Math.random() * TAU,
+      orbitRadius: data.orbit,
+      orbitSpeed: 0.35 * Math.pow(365.25 / data.period, 0.55),
+      spin: data.spin,
+      body,
+    };
+    planets.push(planet);
+
+    if (data.earth) planet.earth = true;
+  }
+
+  /* ---------- Moon ---------- */
+  const earthPlanet = planets.find((p) => p.earth);
+  const moonSystem = new THREE.Group();
+  earthPlanet.holder.parent.add(moonSystem); // same parent => same inclination
+
+  const moonHolder = new THREE.Group();
+  moonSystem.add(moonHolder);
+
+  const moonTexture = (() => {
+    const { canvas: c, ctx } = paintTexture(512, 256, (u, v) => {
+      const n = fbm(u * 8, v * 4, 8, 4, 0.5, 2);
+      const m = fbm(u * 20, v * 10, 20, 3, 0.5, 2);
+      const t = n * 0.65 + m * 0.35;
+      const g = 96 + t * 84;
+      return [g, g * 0.98, g * 0.95];
+    });
+    addCraters(ctx, 512, 256, 110, 424242);
+    return canvasTexture(c);
+  })();
+
+  const moonMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.27, 32, 16),
+    new THREE.MeshStandardMaterial({ map: moonTexture, roughness: 0.95, metalness: 0 })
+  );
+  moonHolder.add(moonMesh);
+
+  const moonBody = registerBody('Moon', moonMesh, 0.27);
+
+  const moon = {
+    holder: moonHolder,
+    mesh: moonMesh,
+    angle: Math.random() * TAU,
+    orbitRadius: 2.6,
+    orbitSpeed: 0.9,
+    body: moonBody,
+  };
+
+  /* ============================================================
+     10. Camera focus / follow behaviour
+     ============================================================ */
+  let followBody = null;
+  let camTween = null;
+
+  const easeInOutCubic = (t) =>
+    t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+  function focusOn(body) {
+    const target = new THREE.Vector3();
+    if (body) body.mesh.getWorldPosition(target);
+
+    const dir = camera.position.clone().sub(controls.target);
+    if (dir.lengthSq() < 1e-6) dir.set(0, 0.35, 1);
+    dir.normalize();
+
+    let toPos;
+    if (body) {
+      const dist = Math.max(body.radius * 5.5, 2.6);
+      toPos = target.clone().add(dir.multiplyScalar(dist));
+    } else {
+      toPos = HOME_POSITION.clone();
+    }
+
+    camTween = {
+      t: 0,
+      duration: 1.15,
+      fromPos: camera.position.clone(),
+      toPos,
+      fromTarget: controls.target.clone(),
+      toTarget: target.clone(),
+      body,
+    };
+    followBody = body;
+    updateBodyButtons();
+  }
+
+  /* ============================================================
+     11. UI wiring
+     ============================================================ */
+  const speedInput = document.getElementById('speed');
+  const speedOut = document.getElementById('speed-out');
+  const pauseBtn = document.getElementById('btn-pause');
+  const orbitsBtn = document.getElementById('btn-orbits');
+  const labelsBtn = document.getElementById('btn-labels');
+  const resetBtn = document.getElementById('btn-reset');
+  const bodiesRow = document.getElementById('bodies');
+
+  let simSpeed = 1;
+  let paused = false;
+  let showOrbits = true;
+  let showLabels = true;
+
+  function updateSpeedLabel() {
+    speedOut.textContent = `${simSpeed.toFixed(1)}\u00d7`;
+  }
+
+  speedInput.addEventListener('input', () => {
+    simSpeed = parseFloat(speedInput.value);
+    updateSpeedLabel();
+  });
+
+  function setPaused(value) {
+    paused = value;
+    pauseBtn.textContent = paused ? '\u25b6' : '\u275a\u275a';
+    pauseBtn.classList.toggle('active', paused);
+    pauseBtn.setAttribute('aria-label', paused ? 'Resume' : 'Pause');
+  }
+
+  pauseBtn.addEventListener('click', () => setPaused(!paused));
+
+  orbitsBtn.addEventListener('click', () => {
+    showOrbits = !showOrbits;
+    orbitsBtn.classList.toggle('active', showOrbits);
+    for (const line of orbitLines) line.visible = showOrbits;
+  });
+
+  labelsBtn.addEventListener('click', () => {
+    showLabels = !showLabels;
+    labelsBtn.classList.toggle('active', showLabels);
+  });
+
+  resetBtn.addEventListener('click', () => focusOn(null));
+
+  // One chip per body, plus a "System" overview chip.
+  const bodyButtons = new Map();
+
+  function makeBodyButton(label, body) {
+    const btn = document.createElement('button');
+    btn.textContent = label;
+    btn.addEventListener('click', () => focusOn(body));
+    bodiesRow.appendChild(btn);
+    bodyButtons.set(body, btn);
+    return btn;
+  }
+
+  makeBodyButton('System', null);
+  for (const body of bodies) makeBodyButton(body.name, body);
+
+  function updateBodyButtons() {
+    for (const [body, btn] of bodyButtons) {
+      btn.classList.toggle('active', body === followBody);
+    }
+  }
+  updateBodyButtons();
+
+  // Keyboard shortcuts.
+  window.addEventListener('keydown', (e) => {
+    if (e.target instanceof HTMLInputElement) return;
+    if (e.code === 'Space') {
+      e.preventDefault();
+      setPaused(!paused);
+    } else if (e.key === 'r' || e.key === 'R') {
+      focusOn(null);
+    } else if (e.key === 'o' || e.key === 'O') {
+      orbitsBtn.click();
+    } else if (e.key === 'l' || e.key === 'L') {
+      labelsBtn.click();
+    }
+  });
+
+  /* ============================================================
+     12. Picking (click a body to follow it)
+     ============================================================ */
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  let pointerDown = null;
+
+  canvas.addEventListener('pointerdown', (e) => {
+    pointerDown = { x: e.clientX, y: e.clientY };
+  });
+
+  canvas.addEventListener('pointerup', (e) => {
+    if (!pointerDown) return;
+    const dx = e.clientX - pointerDown.x;
+    const dy = e.clientY - pointerDown.y;
+    pointerDown = null;
+
+    // Ignore drags — only treat a near-stationary press as a click.
+    if (dx * dx + dy * dy > 36) return;
+
+    pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
+    pointer.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+
+    const hits = raycaster.intersectObjects(pickables, false);
+    if (hits.length > 0) {
+      focusOn(hits[0].object.userData.body);
+    }
+  });
+
+  /* ============================================================
+     13. Resize
+     ============================================================ */
+  function onResize() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(w, h);
+  }
+  window.addEventListener('resize', onResize);
+
+  /* ============================================================
+     14. Animation loop
+     ============================================================ */
+  const clock = new THREE.Clock();
+  const tmpVec = new THREE.Vector3();
+  const tmpVec2 = new THREE.Vector3();
+
+  function updateLabels() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    for (const body of bodies) {
+      const el = body.el;
+      if (!showLabels) {
+        el.classList.add('is-hidden');
+        continue;
+      }
+
+      body.mesh.getWorldPosition(tmpVec);
+      tmpVec.y += body.radius * 1.5 + 0.6;
+      tmpVec.project(camera);
+
+      const behind = tmpVec.z > 1;
+      const offscreen =
+        tmpVec.x < -1.15 || tmpVec.x > 1.15 || tmpVec.y < -1.15 || tmpVec.y > 1.15;
+
+      if (behind || offscreen) {
+        el.classList.add('is-hidden');
+        continue;
+      }
+
+      el.classList.remove('is-hidden');
+      const x = (tmpVec.x * 0.5 + 0.5) * w;
+      const y = (-tmpVec.y * 0.5 + 0.5) * h;
+      el.style.transform = `translate(-50%, -50%) translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+    }
+  }
+
+  function animate() {
+    const dt = Math.min(clock.getDelta(), 0.1);
+    const step = paused ? 0 : dt * simSpeed;
+
+    // --- Orbital motion ---
+    for (const p of planets) {
+      p.angle += p.orbitSpeed * step;
+      p.holder.position.set(
+        Math.cos(p.angle) * p.orbitRadius,
+        0,
+        Math.sin(p.angle) * p.orbitRadius
+      );
+      p.mesh.rotation.y += p.spin * step;
+      if (p.clouds) p.clouds.rotation.y += p.spin * 1.35 * step;
+    }
+
+    // --- Moon ---
+    moonSystem.position.copy(earthPlanet.holder.position);
+    moon.angle += moon.orbitSpeed * step;
+    moon.holder.position.set(
+      Math.cos(moon.angle) * moon.orbitRadius,
+      0,
+      Math.sin(moon.angle) * moon.orbitRadius
+    );
+    moon.mesh.rotation.y += 0.35 * step;
+
+    // --- Sun ---
+    sunMesh.rotation.y += 0.045 * step;
+    sunGlow.material.rotation += 0.02 * step;
+
+    // --- Camera tween / follow ---
+    if (camTween) {
+      camTween.t = Math.min(1, camTween.t + dt / camTween.duration);
+      const e = easeInOutCubic(camTween.t);
+
+      if (camTween.body) camTween.body.mesh.getWorldPosition(camTween.toTarget);
+
+      camera.position.lerpVectors(camTween.fromPos, camTween.toPos, e);
+      controls.target.lerpVectors(camTween.fromTarget, camTween.toTarget, e);
+
+      if (camTween.t >= 1) camTween = null;
+    } else if (followBody) {
+      followBody.mesh.getWorldPosition(tmpVec2);
+      tmpVec2.sub(controls.target);
+      controls.target.add(tmpVec2);
+      camera.position.add(tmpVec2);
+    }
+
+    controls.update();
+    updateLabels();
+    renderer.render(scene, camera);
+  }
+
+  updateSpeedLabel();
+  renderer.setAnimationLoop(animate);
+
+  // Reveal the scene once the first frame is on screen.
+  const loadingEl = document.getElementById('loading');
+  requestAnimationFrame(() => {
+    loadingEl.classList.add('is-done');
+    setTimeout(() => loadingEl.remove(), 600);
+  });
+  </script>
+</body>
+</html>
